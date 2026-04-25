@@ -71,6 +71,25 @@ const slugify = (value = "") =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
 
+const customCatalogImageOverrides = {
+  "Oxford Office Shirt": "/images/catalog/custom/oxford-office-shirt.webp",
+  "Vintage Graphic Tee": "/images/catalog/custom/vintage-graphic-tee.webp",
+  "Relaxed Crew Neck Tee": "/images/catalog/custom/relaxed-crew-neck-tee.jpg",
+  "Everyday Soft Top": "/images/catalog/custom/everyday-soft-top.jpg",
+  "Classic White Shirt": "/images/catalog/custom/classic-white-shirt.jpg",
+  "Ribbed Casual Tee": "/images/catalog/custom/ribbed-casual-tee.webp",
+  "Smart Check Shirt": "/images/catalog/custom/smart-check-shirt.webp",
+  "Rainbow Play Top": "/images/catalog/custom/rainbow-play-top.webp",
+  "Stylish Mens Trackpants": "/images/catalog/custom/running-track-pants.webp",
+  "casual shirts for men": "/images/catalog/custom/striped-weekend-shirt.webp",
+  "beige pant men's": "/images/catalog/custom/tailored-cotton-chinos.jpg",
+  "Lava Men Hoodie": "/images/catalog/custom/zip-front-hoodie.webp",
+  "Men's grey single breasted slim fit blazer": "/images/catalog/custom/smart-casual-blazer.webp",
+  "pure cotton denim jacket": "/images/catalog/custom/denim-jacket-slate.jpg",
+  "Mustard Parrot Chanderi Kurta Set for Men": "/images/catalog/custom/embroidered-kurta-set-male.webp",
+  "graphic print Men Sweatshirt": "/images/catalog/custom/varsity-sweatshirt.webp",
+};
+
 const normalizeSeedPrice = (category, basePrice) => {
   const rule = seedPriceRules[category];
 
@@ -378,6 +397,10 @@ const beautyFeatures = (productType) => {
   return ["Beauty Edit", "Smooth Application", "Everyday Use"];
 };
 
+const fashionCatalogImage = ({ name, segment, productType }) =>
+  customCatalogImageOverrides[name] ||
+  generatedCatalogImage({ category: "Fashion", name, segment, productType });
+
 const buildFashionSegment = (segment, specs) =>
   specs.map(([name, productType, price], index) => ({
     name,
@@ -386,7 +409,7 @@ const buildFashionSegment = (segment, specs) =>
     price,
     rating: Number((4.1 + ((index + segment.length) % 7) * 0.1).toFixed(1)),
     stock: 10 + ((index * 3 + segment.length) % 26),
-    image: generatedCatalogImage({ category: "Fashion", name, segment, productType }),
+    image: fashionCatalogImage({ name, segment, productType }),
     description: fashionDescription(segment, productType, name),
     features: fashionFeatures(segment, productType),
     isFeatured: index < 3,
@@ -418,20 +441,20 @@ const maleFashionSpecs = [
   ["Relaxed Crew Neck Tee", "T-Shirt", 799],
   ["Vintage Graphic Tee", "T-Shirt", 899],
   ["Oxford Office Shirt", "Shirt", 1499],
-  ["Striped Weekend Shirt", "Shirt", 1399],
+  ["casual shirts for men", "Shirt", 1399],
   ["Essential Knit Top", "Top", 1099],
   ["Linen Summer Shirt", "Shirt", 1799],
   ["Festive Kurta Classic", "Indian Wear", 1699],
-  ["Embroidered Kurta Set", "Indian Wear", 2599],
+  ["Mustard Parrot Chanderi Kurta Set for Men", "Indian Wear", 2599],
   ["Straight Fit Jeans", "Jeans", 1999],
-  ["Tailored Cotton Chinos", "Trousers", 1899],
-  ["Zip Front Hoodie", "Hoodie", 1799],
-  ["Varsity Sweatshirt", "Sweatshirt", 1599],
+  ["beige pant men's", "Trousers", 1899],
+  ["Lava Men Hoodie", "Hoodie", 1799],
+  ["graphic print Men Sweatshirt", "Sweatshirt", 1599],
   ["Utility Overshirt", "Jacket", 2299],
-  ["Smart Casual Blazer", "Blazer", 4499],
+  ["Men's grey single breasted slim fit blazer", "Blazer", 4499],
   ["Printed Resort Co-ord", "Co-ord", 2799],
-  ["Running Track Pants", "Joggers", 1399],
-  ["Denim Jacket Slate", "Jacket", 2499],
+  ["Stylish Mens Trackpants", "Joggers", 1399],
+  ["pure cotton denim jacket", "Jacket", 2499],
   ["Mandarin Collar Shirt", "Shirt", 1599],
   ["Festive Nehru Jacket", "Indian Wear", 2399],
   ["Monochrome Bomber", "Jacket", 2899],

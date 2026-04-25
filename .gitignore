@@ -11,4 +11,6 @@ dist/
 build/
 .DS_Store
 Thumbs.db
-public/images/catalog/
+public/images/catalog/*
+!public/images/catalog/custom/
+!public/images/catalog/custom/**

@@ -18,7 +18,7 @@ const orderSchema = new mongoose.Schema(
     customer: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     items: [orderItemSchema],
     shippingAddress: { type: String, required: true },
-    paymentMethod: { type: String, default: "Card Authorization" },
+    paymentMethod: { type: String, default: "Cash on Delivery" },
     paymentStatus: { type: String, enum: ["pending", "paid"], default: "paid" },
     paymentReference: { type: String, default: "" },
     authorizationCode: { type: String, default: "" },
@@ -26,9 +26,10 @@ const orderSchema = new mongoose.Schema(
     maskedCard: { type: String, default: "" },
     orderStatus: {
       type: String,
-      enum: ["processing", "confirmed", "shipped", "delivered"],
+      enum: ["processing", "confirmed", "shipped", "delivered", "cancelled"],
       default: "processing",
     },
+    cancelledAt: { type: Date },
     totalAmount: { type: Number, required: true, min: 0 },
   },
   { timestamps: true }

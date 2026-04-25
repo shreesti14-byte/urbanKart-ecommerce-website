@@ -4,9 +4,10 @@
   "description": "Responsive multi-vendor e-commerce platform with Node.js, Express, MongoDB, and vanilla frontend.",
   "main": "server.js",
   "scripts": {
-    "start": "node src/seed/seedData.js && node server.js",
+    "start": "node server.js",
     "dev": "node --watch server.js",
-    "seed": "node src/seed/seedData.js"
+    "seed": "node src/seed/seedData.js",
+    "check": "node --check server.js && node --check src/seed/seedData.js && node --check src/models/Order.js && node --check src/routes/orderRoutes.js && node --check public/js/app-core.js && node --check public/js/app-shell.js && node --check public/js/app-views.js && node --check public/js/app-actions.js"
   },
   "keywords": [
     "ecommerce",

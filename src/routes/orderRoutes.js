@@ -5,6 +5,8 @@ const Order = require("../models/Order");
 const { protect, authorize } = require("../middleware/authMiddleware");
 
 const router = express.Router();
+const CANCELLABLE_ORDER_STATUSES = new Set(["processing", "confirmed"]);
+const ADVANCEABLE_ORDER_STATUSES = new Set(["processing", "confirmed", "shipped", "delivered"]);
 
 const cardMask = (number = "") => {
   const digits = String(number).replace(/\D/g, "");
@@ -19,6 +21,37 @@ const normalizeCartItems = (cart = []) =>
     product: item.product._id || item.product,
     quantity: item.quantity,
   }));
+
+const restockOrderItems = async (order) => {
+  for (const item of order.items || []) {
+    const product = await Product.findById(item.product);
+
+    if (!product) {
+      continue;
+    }
+
+    product.stock += Number(item.quantity) || 0;
+    await product.save();
+  }
+};
+
+const cancelOrder = async (order) => {
+  if (order.orderStatus === "cancelled") {
+    return order;
+  }
+
+  if (!CANCELLABLE_ORDER_STATUSES.has(order.orderStatus)) {
+    const error = new Error("Order ab cancel nahi ho sakta");
+    error.status = 400;
+    throw error;
+  }
+
+  await restockOrderItems(order);
+  order.orderStatus = "cancelled";
+  order.cancelledAt = new Date();
+  await order.save();
+  return order;
+};
 
 router.post("/authorize", protect, authorize("customer", "admin"), async (req, res, next) => {
   try {
@@ -80,7 +113,7 @@ router.post("/authorize", protect, authorize("customer", "admin"), async (req, r
 
 router.post("/", protect, authorize("customer", "admin"), async (req, res, next) => {
   try {
-    const { shippingAddress, paymentMethod = "Card Authorization", paymentAuthorization } = req.body;
+    const { shippingAddress, paymentMethod = "Cash on Delivery", paymentAuthorization } = req.body;
     const user = await User.findById(req.user._id).populate("cart.product");
     const validCartItems = user.cart.filter((item) => item.product);
 
@@ -123,7 +156,9 @@ router.post("/", protect, authorize("customer", "admin"), async (req, res, next)
     }
 
     const requiresAuthorization = paymentMethod === "Card Authorization";
-    const paymentStatus = requiresAuthorization ? "paid" : "pending";
+    const isUpiPayment = paymentMethod === "UPI Payment";
+    const paymentStatus = requiresAuthorization || isUpiPayment ? "paid" : "pending";
+    const now = new Date();
 
     if (requiresAuthorization) {
       if (
@@ -144,9 +179,9 @@ router.post("/", protect, authorize("customer", "admin"), async (req, res, next)
       shippingAddress: shippingAddress || user.address || "Default address",
       paymentMethod,
       paymentStatus,
-      paymentReference: paymentAuthorization?.paymentReference || "",
+      paymentReference: paymentAuthorization?.paymentReference || (isUpiPayment ? `UPI-${Date.now().toString().slice(-8)}` : ""),
       authorizationCode: paymentAuthorization?.authorizationCode || "",
-      authorizedAt: paymentAuthorization?.authorizedAt || undefined,
+      authorizedAt: paymentAuthorization?.authorizedAt || (isUpiPayment ? now : undefined),
       maskedCard: paymentAuthorization?.maskedCard || "",
       totalAmount,
     });
@@ -195,10 +230,45 @@ router.put("/:id/status", protect, authorize("vendor", "admin"), async (req, res
       return res.status(403).json({ success: false, message: "Not allowed to update this order" });
     }
 
-    order.orderStatus = req.body.orderStatus || order.orderStatus;
+    const nextStatus = req.body.orderStatus || order.orderStatus;
+
+    if (nextStatus === "cancelled") {
+      await cancelOrder(order);
+      return res.json({ success: true, message: "Order cancelled", data: order });
+    }
+
+    if (!ADVANCEABLE_ORDER_STATUSES.has(nextStatus)) {
+      return res.status(400).json({ success: false, message: "Invalid order status" });
+    }
+
+    if (order.orderStatus === "cancelled") {
+      return res.status(400).json({ success: false, message: "Cancelled order ko update nahi kar sakte" });
+    }
+
+    order.orderStatus = nextStatus;
     await order.save();
 
     res.json({ success: true, message: "Order status updated", data: order });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.put("/:id/cancel", protect, authorize("customer", "admin"), async (req, res, next) => {
+  try {
+    const order = await Order.findById(req.params.id);
+
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    if (req.user.role === "customer" && order.customer.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ success: false, message: "Not allowed to cancel this order" });
+    }
+
+    await cancelOrder(order);
+
+    res.json({ success: true, message: "Order cancelled successfully", data: order });
   } catch (error) {
     next(error);
   }

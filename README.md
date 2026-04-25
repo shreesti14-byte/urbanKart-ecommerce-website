@@ -1,39 +1,59 @@
 # UrbanKart
 
-Multi-vendor e-commerce platform built with HTML, CSS, JavaScript, Node.js, Express, and MongoDB.
+UrbanKart is a multi-vendor e-commerce platform built with vanilla frontend code, Node.js, Express, and MongoDB.
 
 ## Features
 
 - JWT-based authentication with `admin`, `vendor`, and `customer` roles
-- Responsive storefront with category browsing, filtering, sorting, and product details
-- Wishlist, cart, checkout, and order tracking for customers
-- Product and inventory management dashboard for vendors
-- User, vendor, product, and order oversight for admins
-- Modular backend with REST APIs, Mongoose models, and starter seed data
+- Customer storefront with wishlist, cart, checkout, and order tracking
+- Vendor dashboard for product and inventory management
+- Admin dashboard for users, vendors, products, and orders
+- Seeded demo catalog with custom catalog image support
+- Split frontend structure for easier maintenance
+
+## Project Structure
+
+- `public/js/app-core.js` - shared state, API helpers, utilities, image mapping
+- `public/js/app-shell.js` - auth, header, hero, and storefront sections
+- `public/js/app-views.js` - customer, catalog, cart, profile, vendor, and admin views
+- `public/js/app-actions.js` - render pipeline, handlers, mutations, bootstrap
+- `public/images/catalog/custom/` - custom product images that should be committed
 
 ## Setup
 
 1. Copy `.env.example` to `.env`
-2. Add your MongoDB connection string and JWT secret
+2. Add your own MongoDB connection string and JWT secret
 3. Install dependencies:
 
 ```bash
 npm install
 ```
 
-4. Seed demo data:
+4. Seed demo data when needed:
 
 ```bash
 npm run seed
 ```
 
-5. Start the server:
+5. Run validation checks before pushing:
+
+```bash
+npm run check
+```
+
+6. Start the server:
+
+```bash
+npm start
+```
+
+For local development with auto-reload:
 
 ```bash
 npm run dev
 ```
 
-The app will be available at `http://localhost:5000`.
+The app runs on `http://localhost:5002` by default, or on the `PORT` value from your `.env`.
 
 ## Demo Accounts
 
