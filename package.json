@@ -4,7 +4,7 @@
   "description": "Responsive multi-vendor e-commerce platform with Node.js, Express, MongoDB, and vanilla frontend.",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
+    "start": "node src/seed/seedData.js && node server.js",
     "dev": "node --watch server.js",
     "seed": "node src/seed/seedData.js"
   },
