@@ -863,8 +863,21 @@ async function bootstrap() {
   window.addEventListener("scroll", handleScroll);
   handleScroll();
   renderNav();
-  await loadCategories();
-  await loadProducts();
+  
+  try {
+    await loadCategories();
+    await loadProducts();
+  } catch (err) {
+    console.error("Backend error:", err);
+    document.getElementById("app").innerHTML = `
+      <div style="padding: 100px 20px; text-align: center; font-family: sans-serif;">
+        <h2 style="color: #333;">Service Unavailable</h2>
+        <p style="color: #666; margin-top: 10px;">The backend server is either restarting or not reachable. Please refresh the page in a few seconds.</p>
+        <button onclick="location.reload()" style="margin-top: 20px; padding: 10px 20px; background: #000; color: #fff; border: none; border-radius: 4px; cursor: pointer;">Retry</button>
+      </div>
+    `;
+    return;
+  }
 
   if (state.token) {
     try {

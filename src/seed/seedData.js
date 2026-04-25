@@ -581,7 +581,7 @@ const catalog = {
       features: ["Pantry Staple", "5kg Pack", "Daily Use"],
     },
     {
-      name: "Kitchen Oil Bottle",
+      name: "Olive Oil Bottle",
       description: "Refined cooking oil bottle suitable for frying, sauteing, and routine meal preparation.",
       price: 6,
       rating: 4.3,

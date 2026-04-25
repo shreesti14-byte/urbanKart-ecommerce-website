@@ -14,7 +14,7 @@ const vendorRoutes = require("./src/routes/vendorRoutes");
 const adminRoutes = require("./src/routes/adminRoutes");
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5002;
 
 connectDB();
 
