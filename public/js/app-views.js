@@ -334,11 +334,10 @@ function checkoutSummaryItemsMarkup(bill = {}) {
               <div class="summary-line-copy">
                 <strong>${escapeText(item.name)}</strong>
                 <span>${escapeText(item.vendorName || product.vendorName || "UrbanKart")}</span>
-                <small>Qty ${item.quantity} x ${formatCurrency(item.unitPrice)} | GST ${item.gstRate}%</small>
+                <small>Qty ${item.quantity}</small>
               </div>
               <div class="summary-line-values">
                 <strong>${formatCurrency(item.lineTotal)}</strong>
-                <small>GST ${formatCurrency(item.gstAmount)}</small>
               </div>
             </article>
           `;
@@ -410,11 +409,10 @@ function billItemsMarkup(bill = {}, options = {}) {
             <div class="bill-item-row">
               <div>
                 <strong>${escapeText(item.name)}</strong>
-                <p class="meta">Qty ${item.quantity} x ${formatCurrency(item.unitPrice)} | GST ${item.gstRate}%</p>
+                <p class="meta">Qty ${item.quantity}</p>
               </div>
               <div class="bill-item-values">
                 <span>${formatCurrency(item.lineTotal)}</span>
-                <small class="meta">GST ${formatCurrency(item.gstAmount)}</small>
               </div>
             </div>
           `
@@ -422,6 +420,10 @@ function billItemsMarkup(bill = {}, options = {}) {
         .join("")}
     </div>
   `;
+}
+
+function billItemsTotalAmount(bill = {}) {
+  return Math.max(0, Number(bill.totalAmount || 0) - Number(bill.deliveryCharge || 0));
 }
 
 function billSummaryMarkup(bill = {}, options = {}) {
@@ -438,10 +440,8 @@ function billSummaryMarkup(bill = {}, options = {}) {
       </div>
       ${billItemsMarkup(bill)}
       <div class="bill-summary-table">
-        <div><span>Subtotal</span><strong>${formatCurrency(bill.subtotal || 0)}</strong></div>
-        <div><span>Discount</span><strong>- ${formatCurrency(bill.discountAmount || 0)}</strong></div>
-        <div><span>GST</span><strong>${formatCurrency(bill.gstAmount || 0)}</strong></div>
-        <div><span>Delivery</span><strong>${formatCurrency(bill.deliveryCharge || 0)}</strong></div>
+        <div><span>Items</span><strong>${formatCurrency(billItemsTotalAmount(bill))}</strong></div>
+        <div><span>Delivery</span><strong>${bill.deliveryCharge ? formatCurrency(bill.deliveryCharge) : "Free"}</strong></div>
         <div class="grand-total"><span>Total</span><strong>${formatCurrency(bill.totalAmount || 0)}</strong></div>
       </div>
       ${
@@ -492,9 +492,8 @@ function productDetailView() {
             <div>${ratingStars(product.rating)} <span class="meta">| ${reviewCountLabel(product)}</span></div>
             <p>${escapeText(product.description)}</p>
             <div class="summary-total">${formatCurrency(product.price)}</div>
-            <p class="meta">${escapeText(inventory.detail)} | GST ${productGstRate(product)}% added in bill</p>
+            <p class="meta">${escapeText(inventory.detail)}</p>
             <div>${(product.features || []).map((feature) => `<span class="feature-chip">${escapeText(feature)}</span>`).join("")}</div>
-            <p class="detail-buy-note">Open quick checkout instantly with <strong>Buy Now</strong>, or save the item in your cart for later.</p>
             <div class="toolbar detail-action-row">
               <button class="btn btn-primary" type="button" onclick="startBuyNow('${product._id}')" ${
                 inventory.purchasable ? "" : "disabled"
@@ -551,7 +550,7 @@ function cartView() {
               <div>
                 <p class="eyebrow">Your Bag</p>
                 <h2 class="section-title">Shopping Cart</h2>
-                <p class="section-kicker">${itemCount} item${itemCount === 1 ? "" : "s"} in your cart. Use <strong>Buy Now</strong> on any product to jump directly to its order summary page.</p>
+                <p class="section-kicker">${itemCount} item${itemCount === 1 ? "" : "s"} in your cart.</p>
               </div>
               <div class="toolbar checkout-panel-actions">
                 <button class="btn btn-ghost" type="button" onclick="goHome()">Continue shopping</button>
@@ -633,7 +632,7 @@ function orderSummaryCardMarkup() {
           ? `<p class="coupon-error">${escapeText(bill.invalidCoupon.message)}</p>`
           : bill.coupon
           ? `<p class="coupon-success">Coupon applied!</p>`
-          : `<p class="coupon-helper">Select any coupon from the dropdown to apply it instantly.</p>`
+          : ""
       }
       ${
         bill.coupon
@@ -643,9 +642,7 @@ function orderSummaryCardMarkup() {
           : ""
       }
       <div class="bill-summary-table compact">
-        <div><span>Subtotal</span><strong>${formatCurrency(bill.subtotal)}</strong></div>
-        <div><span>Discount</span><strong>- ${formatCurrency(bill.discountAmount)}</strong></div>
-        <div><span>Tax</span><strong>${formatCurrency(bill.gstAmount)}</strong></div>
+        <div><span>Items</span><strong>${formatCurrency(billItemsTotalAmount(bill))}</strong></div>
         <div><span>Shipping</span><strong>${bill.deliveryCharge ? formatCurrency(bill.deliveryCharge) : "Free"}</strong></div>
         <div class="grand-total"><span>Payable</span><strong>${formatCurrency(bill.totalAmount)}</strong></div>
       </div>
@@ -1149,7 +1146,6 @@ function vendorView() {
           <div class="section-head">
             <div>
               <h2 class="section-title">Vendor Hub</h2>
-              <p class="section-kicker">Manage products, inventory, and what customers can see on the live store.</p>
             </div>
           </div>
           <div class="stats-grid">
@@ -1166,7 +1162,6 @@ function vendorView() {
           <div class="section-head">
             <div>
               <h2 class="section-title">Manage Products</h2>
-              <p class="section-kicker">Save karte hi product niche list me aa jayega aur customer site par uska live status bhi dikhega.</p>
             </div>
           </div>
           <form onsubmit="submitProduct(event)">
@@ -1174,13 +1169,11 @@ function vendorView() {
             <div class="field"><label>Name</label><input id="productName" required /></div>
             <div class="field"><label>Description</label><textarea id="productDescription" required></textarea></div>
             <div class="field"><label>Image URL</label><input id="productImage" required /></div>
-            <div class="field"><label>Category</label><select id="productCategory" onchange="document.getElementById('productGstRate').value = defaultGstRateForCategory(this.value)">${state.categories.slice(1).map((category) => `<option value="${escapeText(category)}">${escapeText(category)}</option>`).join("")}</select></div>
+            <div class="field"><label>Category</label><select id="productCategory">${state.categories.slice(1).map((category) => `<option value="${escapeText(category)}">${escapeText(category)}</option>`).join("")}</select></div>
             <div class="field"><label>Price</label><input id="productPrice" type="number" min="0" required /></div>
             <div class="field"><label>Rating</label><input id="productRating" type="number" min="0" max="5" step="0.1" value="4" required /></div>
             <div class="field"><label>Stock</label><input id="productStock" type="number" min="0" required /></div>
-            <div class="field"><label>GST (%)</label><input id="productGstRate" type="number" min="0" max="40" value="12" required /></div>
             <div class="field"><label>Features</label><input id="productFeatures" placeholder="Comma separated" /></div>
-            <p class="form-hint">Stock 0 karoge to customer, vendor, aur admin tino dashboards me product out of stock ke label ke saath dikhega. GST yahin se order bill me add hoga.</p>
             <button class="btn btn-primary" type="submit">Save Product</button>
           </form>
         </section>
@@ -1188,7 +1181,6 @@ function vendorView() {
           <div class="section-head">
             <div>
               <h2 class="section-title">Product Visibility</h2>
-              <p class="section-kicker">Naya product sabse upar dikh raha hoga. Customer site column se turant pata chalega ki product live hai ya out of stock.</p>
             </div>
           </div>
           <div class="table-wrap">
@@ -1256,7 +1248,6 @@ function adminView() {
           <div class="section-head">
             <div>
               <h2 class="section-title">Admin Panel</h2>
-              <p class="section-kicker">Monitor users, vendors, orders, and what the real customer storefront is showing right now.</p>
             </div>
           </div>
           <div class="stats-grid">
@@ -1268,11 +1259,6 @@ function adminView() {
             <div class="feature-card"><p>Out of Stock</p><h3>${dashboard.metrics.outOfStockProducts}</h3></div>
             <div class="feature-card"><p>Low Stock</p><h3>${dashboard.metrics.lowStockProducts}</h3></div>
             <div class="feature-card"><p>New 7 Days</p><h3>${dashboard.metrics.newProductsThisWeek ?? recentProducts}</h3></div>
-          </div>
-        </section>
-        <section class="admin-panel">
-          <div class="dashboard-callout">
-            Customer storefront snapshot: ${dashboard.metrics.liveProducts} products abhi buyable hain, ${dashboard.metrics.outOfStockProducts} products out of stock label ke saath visible hain, aur pichhle 7 din me ${dashboard.metrics.newProductsThisWeek ?? recentProducts} naye products add hue hain.
           </div>
         </section>
         <section class="admin-panel">
@@ -1306,7 +1292,6 @@ function adminView() {
           <div class="section-head">
             <div>
               <h2 class="section-title">Vendor Products</h2>
-              <p class="section-kicker">Yahan se dekh sakte ho kis vendor ne kaunsa product add kiya hai, kab add kiya hai, aur customer site par wo live hai ya out of stock.</p>
             </div>
           </div>
           <div class="table-wrap">

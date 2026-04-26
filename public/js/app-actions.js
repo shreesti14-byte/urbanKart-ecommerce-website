@@ -561,7 +561,6 @@ function editProduct(productId) {
   document.getElementById("productPrice").value = product.price;
   document.getElementById("productRating").value = product.rating;
   document.getElementById("productStock").value = product.stock;
-  document.getElementById("productGstRate").value = product.gstRate ?? defaultGstRateForCategory(product.category);
   document.getElementById("productFeatures").value = (product.features || []).join(", ");
 }
 
@@ -578,8 +577,6 @@ async function submitProduct(event) {
     price: Number(document.getElementById("productPrice").value),
     rating: Number(document.getElementById("productRating").value),
     stock: Number(document.getElementById("productStock").value),
-    gstRate:
-      Number(document.getElementById("productGstRate").value) || defaultGstRateForCategory(category),
     features: document
       .getElementById("productFeatures")
       .value.split(",")
