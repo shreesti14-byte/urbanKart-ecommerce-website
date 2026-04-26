@@ -1299,6 +1299,27 @@ form,
   position: sticky;
   top: 142px;
   align-self: start;
+  max-height: calc(100vh - 158px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.catalog-sidebar::-webkit-scrollbar {
+  width: 8px;
+}
+
+.catalog-sidebar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.catalog-sidebar::-webkit-scrollbar-thumb {
+  background: rgba(122, 139, 90, 0.4);
+  border-radius: 999px;
+}
+
+.catalog-sidebar::-webkit-scrollbar-thumb:hover {
+  background: rgba(122, 139, 90, 0.58);
 }
 
 .filter-note {
@@ -2671,6 +2692,8 @@ td {
   .summary-panel,
   .review-side-panel {
     position: static;
+    max-height: none;
+    overflow: visible;
   }
 
   .footer-inner {
