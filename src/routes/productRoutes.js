@@ -3,6 +3,7 @@ const Product = require("../models/Product");
 const User = require("../models/User");
 const { protect, authorize } = require("../middleware/authMiddleware");
 const { catalogCategories } = require("../config/catalogMeta");
+const { clampGstRate, defaultGstRateForCategory } = require("../config/billing");
 
 const router = express.Router();
 
@@ -21,6 +22,30 @@ const logProductActivity = (action, actor, product) => {
       `stock=${product.stock}`,
     ].join(" ")
   );
+};
+
+const normalizeProductPayload = (payload = {}) => {
+  const normalizedPayload = { ...payload };
+
+  normalizedPayload.gstRate = clampGstRate(
+    normalizedPayload.gstRate,
+    normalizedPayload.category
+  );
+
+  return normalizedPayload;
+};
+
+const refreshProductRating = (product) => {
+  if (!Array.isArray(product.reviews) || !product.reviews.length) {
+    product.reviewCount = 0;
+    product.rating = Number(product.rating) || 0;
+    return;
+  }
+
+  product.reviewCount = product.reviews.length;
+  product.rating =
+    product.reviews.reduce((sum, review) => sum + (Number(review.rating) || 0), 0) /
+    product.reviewCount;
 };
 
 router.get("/categories/all", (req, res) => {
@@ -100,7 +125,7 @@ router.get("/:id", async (req, res, next) => {
 router.post("/", protect, authorize("vendor", "admin"), async (req, res, next) => {
   try {
     const product = await Product.create({
-      ...req.body,
+      ...normalizeProductPayload(req.body),
       vendor: req.user._id,
       vendorName: req.user.storeName || req.user.name,
     });
@@ -126,7 +151,16 @@ router.put("/:id", protect, authorize("vendor", "admin"), async (req, res, next)
       return res.status(403).json({ success: false, message: "Not allowed to edit this product" });
     }
 
-    Object.assign(product, req.body);
+    Object.assign(
+      product,
+      normalizeProductPayload({
+        ...req.body,
+        category: req.body.category || product.category,
+      })
+    );
+    if (product.gstRate == null) {
+      product.gstRate = defaultGstRateForCategory(product.category);
+    }
     await product.save();
     logProductActivity("update", req.user, product);
 
@@ -162,6 +196,55 @@ router.delete("/:id", protect, authorize("vendor", "admin"), async (req, res, ne
     await product.deleteOne();
 
     res.json({ success: true, message: "Product deleted" });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/:id/reviews", protect, authorize("customer", "admin"), async (req, res, next) => {
+  try {
+    const product = await Product.findById(req.params.id);
+
+    if (!product) {
+      return res.status(404).json({ success: false, message: "Product not found" });
+    }
+
+    const rating = Number(req.body.rating);
+    const comment = String(req.body.comment || "").trim();
+
+    if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
+      return res.status(400).json({ success: false, message: "Please select a rating between 1 and 5" });
+    }
+
+    if (comment.length < 4) {
+      return res.status(400).json({ success: false, message: "Please add a short review comment" });
+    }
+
+    const existingReview = product.reviews.find(
+      (review) => review.customer.toString() === req.user._id.toString()
+    );
+
+    if (existingReview) {
+      existingReview.rating = rating;
+      existingReview.comment = comment;
+      existingReview.customerName = req.user.name;
+    } else {
+      product.reviews.unshift({
+        customer: req.user._id,
+        customerName: req.user.name,
+        rating,
+        comment,
+      });
+    }
+
+    refreshProductRating(product);
+    await product.save();
+
+    res.status(existingReview ? 200 : 201).json({
+      success: true,
+      message: existingReview ? "Review updated successfully" : "Review added successfully",
+      data: product,
+    });
   } catch (error) {
     next(error);
   }

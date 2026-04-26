@@ -22,6 +22,7 @@ function render() {
     detail: productDetailView,
     wishlist: wishlistView,
     cart: cartView,
+    orderSummary: orderSummaryView,
     orders: ordersView,
     profile: profileView,
     vendor: vendorView,
@@ -187,6 +188,24 @@ function openProduct(productId) {
   setView("detail", productId);
 }
 
+function openCart() {
+  resetCheckoutState({ preserveShippingAddress: true });
+  state.currentView = "cart";
+  render();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function openOrderSummary() {
+  if (!currentCheckoutItems().length) {
+    showToast(isDirectCheckoutActive() ? "Selected product is no longer available" : "Your cart is empty");
+    return;
+  }
+
+  state.currentView = "orderSummary";
+  render();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
 async function requireCustomerAction(action) {
   if (!state.user) {
     setView("auth");
@@ -273,6 +292,38 @@ function handlePaymentMethodChange(value) {
   render();
 }
 
+function updateCheckoutCouponCode(value) {
+  state.checkout.couponCode = String(value || "").toUpperCase();
+  state.paymentAuthorization = null;
+}
+
+function selectCheckoutCoupon(value) {
+  updateCheckoutCouponCode(value);
+  applyCouponCode();
+}
+
+function applyCouponCode() {
+  if (!state.checkout.couponCode) {
+    state.paymentAuthorization = null;
+    render();
+    showToast("Coupon cleared");
+    return;
+  }
+
+  const bill = currentCheckoutBill();
+
+  if (bill.invalidCoupon) {
+    state.paymentAuthorization = null;
+    render();
+    showToast(bill.invalidCoupon.message);
+    return;
+  }
+
+  state.paymentAuthorization = null;
+  render();
+  showToast("Coupon applied!");
+}
+
 async function authorizePayment() {
   if (!(await requireCustomerAction("Payment authorization"))) {
     return;
@@ -286,6 +337,8 @@ async function authorizePayment() {
         cardNumber: document.getElementById("cardNumber")?.value || "",
         expiry: document.getElementById("cardExpiry")?.value || "",
         cvv: document.getElementById("cardCvv")?.value || "",
+        couponCode: state.checkout.couponCode,
+        directCheckout: isDirectCheckoutActive() ? state.checkout.directCheckout : undefined,
       }),
     });
 
@@ -302,13 +355,21 @@ async function placeOrder(event) {
 
   try {
     const shippingAddress = currentShippingAddress();
-    const unavailableItem = safeCartItems().find((item) => !getInventoryState(item.product).purchasable);
+    const checkoutItems = currentCheckoutItems();
+    const bill = currentCheckoutBill();
+
+    if (!checkoutItems.length) {
+      showToast(isDirectCheckoutActive() ? "Selected product is no longer available" : "Your cart is empty");
+      return;
+    }
+
+    const unavailableItem = checkoutItems.find((item) => !getInventoryState(item.product).purchasable);
     if (unavailableItem) {
       showToast(`${unavailableItem.product.name} is out of stock. Remove it before checkout.`);
       return;
     }
 
-    const quantityIssue = safeCartItems().find((item) => item.quantity > getProductStock(item.product));
+    const quantityIssue = checkoutItems.find((item) => item.quantity > getProductStock(item.product));
     if (quantityIssue) {
       showToast(`Reduce quantity for ${quantityIssue.product.name}. Only ${getProductStock(quantityIssue.product)} left.`);
       return;
@@ -316,6 +377,11 @@ async function placeOrder(event) {
 
     if (!shippingAddress) {
       showToast("Enter the shipping address");
+      return;
+    }
+
+    if (bill.invalidCoupon) {
+      showToast(bill.invalidCoupon.message);
       return;
     }
 
@@ -328,10 +394,64 @@ async function placeOrder(event) {
       shippingAddress,
       paymentMethod: document.getElementById("paymentMethod").value,
       paymentAuthorization: state.paymentAuthorization,
+      couponCode: state.checkout.couponCode,
+      directCheckout: isDirectCheckoutActive() ? state.checkout.directCheckout : undefined,
     });
   } catch (error) {
     showToast(error.message);
   }
+}
+
+function updateDirectCheckoutQuantity(quantity) {
+  const directItem = currentDirectCheckoutItem();
+
+  if (!directItem) {
+    return;
+  }
+
+  const nextQuantity = Math.min(
+    Math.max(1, roundCurrency(quantity || 1)),
+    Math.max(1, getProductStock(directItem.product))
+  );
+
+  state.checkout.directCheckout = {
+    ...state.checkout.directCheckout,
+    quantity: nextQuantity,
+  };
+  state.paymentAuthorization = null;
+  render();
+}
+
+async function startBuyNow(productId, quantity = 1) {
+  if (!(await requireCustomerAction("Buy now"))) {
+    return;
+  }
+
+  const product = findProductById(productId);
+
+  if (!product) {
+    showToast("Product not found");
+    return;
+  }
+
+  if (!getInventoryState(product).purchasable) {
+    showToast(`${product.name} is currently out of stock`);
+    return;
+  }
+
+  state.paymentAuthorization = null;
+  state.checkout.couponCode = "";
+  state.checkout.mode = "direct";
+  state.checkout.directCheckout = {
+    productId,
+    quantity: Math.min(
+      Math.max(1, roundCurrency(quantity || 1)),
+      Math.max(1, getProductStock(product))
+    ),
+  };
+  state.checkout.upiModalOpen = false;
+  state.checkout.upiQrVisible = false;
+  openOrderSummary();
 }
 
 async function submitOrderRequest(payload) {
@@ -340,11 +460,9 @@ async function submitOrderRequest(payload) {
     body: JSON.stringify(payload),
   });
   await refreshProfile();
-  state.paymentAuthorization = null;
-  state.checkout.paymentMethod = "Cash on Delivery";
-  state.checkout.shippingAddress = "";
-  state.checkout.upiModalOpen = false;
-  state.checkout.upiQrVisible = false;
+  state.expandedBillOrders = [];
+  state.expandedTrackingOrders = [];
+  resetCheckoutState();
   state.currentView = "orders";
   render();
   showToast("Order placed successfully");
@@ -353,9 +471,21 @@ async function submitOrderRequest(payload) {
 async function confirmUpiPaymentAndPlaceOrder() {
   try {
     const shippingAddress = currentShippingAddress();
+    const checkoutItems = currentCheckoutItems();
+    const bill = currentCheckoutBill();
+
+    if (!checkoutItems.length) {
+      showToast(isDirectCheckoutActive() ? "Selected product is no longer available" : "Your cart is empty");
+      return;
+    }
 
     if (!shippingAddress) {
       showToast("Enter the shipping address");
+      return;
+    }
+
+    if (bill.invalidCoupon) {
+      showToast(bill.invalidCoupon.message);
       return;
     }
 
@@ -363,7 +493,32 @@ async function confirmUpiPaymentAndPlaceOrder() {
       shippingAddress,
       paymentMethod: "UPI Payment",
       paymentAuthorization: state.paymentAuthorization,
+      couponCode: state.checkout.couponCode,
+      directCheckout: isDirectCheckoutActive() ? state.checkout.directCheckout : undefined,
     });
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function submitProductReview(event, productId) {
+  event.preventDefault();
+
+  if (!(await requireCustomerAction("Review"))) {
+    return;
+  }
+
+  try {
+    const rating = document.getElementById("reviewRating")?.value || "";
+    const comment = document.getElementById("reviewComment")?.value || "";
+    const data = await api(`/api/products/${productId}/reviews`, {
+      method: "POST",
+      body: JSON.stringify({ rating, comment }),
+    });
+
+    replaceProductRecord(data.data);
+    render();
+    showToast(data.message);
   } catch (error) {
     showToast(error.message);
   }
@@ -406,6 +561,7 @@ function editProduct(productId) {
   document.getElementById("productPrice").value = product.price;
   document.getElementById("productRating").value = product.rating;
   document.getElementById("productStock").value = product.stock;
+  document.getElementById("productGstRate").value = product.gstRate ?? defaultGstRateForCategory(product.category);
   document.getElementById("productFeatures").value = (product.features || []).join(", ");
 }
 
@@ -413,14 +569,17 @@ async function submitProduct(event) {
   event.preventDefault();
 
   const productId = document.getElementById("productId").value;
+  const category = document.getElementById("productCategory").value;
   const payload = {
     name: document.getElementById("productName").value,
     description: document.getElementById("productDescription").value,
     image: document.getElementById("productImage").value,
-    category: document.getElementById("productCategory").value,
+    category,
     price: Number(document.getElementById("productPrice").value),
     rating: Number(document.getElementById("productRating").value),
     stock: Number(document.getElementById("productStock").value),
+    gstRate:
+      Number(document.getElementById("productGstRate").value) || defaultGstRateForCategory(category),
     features: document
       .getElementById("productFeatures")
       .value.split(",")

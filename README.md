@@ -6,8 +6,10 @@ UrbanKart is a multi-vendor e-commerce platform built with vanilla frontend code
 
 - JWT-based authentication with `admin`, `vendor`, and `customer` roles
 - Customer storefront with wishlist, cart, checkout, and order tracking
+- Refreshed checkout flow with coupons, GST-aware billing, and direct "Buy now" ordering
 - Vendor dashboard for product and inventory management
 - Admin dashboard for users, vendors, products, and orders
+- Product reviews plus per-category GST defaults for catalog items
 - Seeded demo catalog with custom catalog image support
 - Split frontend structure for easier maintenance
 
@@ -17,6 +19,7 @@ UrbanKart is a multi-vendor e-commerce platform built with vanilla frontend code
 - `public/js/app-shell.js` - auth, header, hero, and storefront sections
 - `public/js/app-views.js` - customer, catalog, cart, profile, vendor, and admin views
 - `public/js/app-actions.js` - render pipeline, handlers, mutations, bootstrap
+- `src/config/billing.js` - coupon rules, GST defaults, and shared order bill calculations
 - `public/images/catalog/custom/` - custom product images that should be committed
 
 ## Setup

@@ -11,10 +11,14 @@ const state = {
   adminDashboard: null,
   paymentAuthorization: null,
   expandedTrackingOrders: [],
+  expandedBillOrders: [],
   authScreenMode: "login",
   checkout: {
     paymentMethod: "Cash on Delivery",
     shippingAddress: "",
+    couponCode: "",
+    mode: "cart",
+    directCheckout: null,
     upiModalOpen: false,
     upiQrVisible: false,
   },
@@ -85,6 +89,42 @@ const fashionSegments = ["Male", "Female", "Kids"];
 const homePriorityCategories = new Set(["Fashion", "Beauty", "Grocery"]);
 const LOW_STOCK_THRESHOLD = 5;
 const RECENT_PRODUCT_WINDOW_DAYS = 7;
+const FREE_DELIVERY_THRESHOLD = 499;
+const STANDARD_DELIVERY_CHARGE = 50;
+const DEFAULT_GST_BY_CATEGORY = {
+  Grocery: 5,
+  Fashion: 12,
+  Beauty: 18,
+  Electronics: 18,
+  "Decoration Items": 12,
+  Shoes: 18,
+  Laptops: 18,
+  "Mobile Phones": 18,
+};
+const COUPON_DEFINITIONS = [
+  {
+    code: "WELCOME50",
+    label: "Flat Rs. 50 off",
+    type: "flat",
+    value: 50,
+    minSubtotal: 299,
+  },
+  {
+    code: "SAVE10",
+    label: "10% off up to Rs. 250",
+    type: "percent",
+    value: 10,
+    minSubtotal: 399,
+    maxDiscount: 250,
+  },
+  {
+    code: "FREESHIP",
+    label: "Free delivery coupon",
+    type: "shipping",
+    value: 0,
+    minSubtotal: 199,
+  },
+];
 
 const journalTopics = [
   {
@@ -161,11 +201,8 @@ function clearAuth() {
   state.profile = null;
   state.orders = [];
   state.expandedTrackingOrders = [];
-  state.paymentAuthorization = null;
-  state.checkout.paymentMethod = "Cash on Delivery";
-  state.checkout.shippingAddress = "";
-  state.checkout.upiModalOpen = false;
-  state.checkout.upiQrVisible = false;
+  state.expandedBillOrders = [];
+  resetCheckoutState();
   localStorage.removeItem("mv_token");
   localStorage.removeItem("mv_user");
 }
@@ -184,6 +221,175 @@ function safeWishlistItems() {
 
 function safeCartItems() {
   return (state.profile?.cart || []).filter((item) => item?.product);
+}
+
+function roundCurrency(value = 0) {
+  return Math.max(0, Math.round(Number(value) || 0));
+}
+
+function sanitizeCouponCode(code = "") {
+  return String(code).trim().toUpperCase();
+}
+
+function defaultGstRateForCategory(category = "") {
+  return DEFAULT_GST_BY_CATEGORY[String(category).trim()] ?? 12;
+}
+
+function productGstRate(product = {}) {
+  const numericValue = Number(product?.gstRate);
+  return Number.isFinite(numericValue) && numericValue >= 0
+    ? Math.min(40, roundCurrency(numericValue))
+    : defaultGstRateForCategory(product?.category);
+}
+
+function resolveCouponDetails(rawCode = "", subtotal = 0) {
+  const code = sanitizeCouponCode(rawCode);
+
+  if (!code) {
+    return {
+      code: "",
+      isValid: false,
+      discountAmount: 0,
+      message: "",
+      definition: null,
+    };
+  }
+
+  const definition = COUPON_DEFINITIONS.find((coupon) => coupon.code === code);
+
+  if (!definition) {
+    return {
+      code,
+      isValid: false,
+      discountAmount: 0,
+      message: "Invalid coupon code",
+      definition: null,
+    };
+  }
+
+  if (roundCurrency(subtotal) < roundCurrency(definition.minSubtotal)) {
+    return {
+      code,
+      isValid: false,
+      discountAmount: 0,
+      message: `Coupon works on orders of Rs. ${roundCurrency(definition.minSubtotal)} or more`,
+      definition,
+    };
+  }
+
+  let discountAmount = 0;
+
+  if (definition.type === "flat") {
+    discountAmount = Math.min(roundCurrency(subtotal), roundCurrency(definition.value));
+  } else if (definition.type === "percent") {
+    const computedDiscount = roundCurrency((roundCurrency(subtotal) * Number(definition.value)) / 100);
+    discountAmount = definition.maxDiscount
+      ? Math.min(computedDiscount, roundCurrency(definition.maxDiscount))
+      : computedDiscount;
+  }
+
+  return {
+    code,
+    isValid: true,
+    discountAmount: roundCurrency(discountAmount),
+    message: "",
+    definition,
+  };
+}
+
+function buildBillFromItems(items = [], couponCode = "") {
+  const normalizedItems = (Array.isArray(items) ? items : [])
+    .map((item) => {
+      const product = item?.product || item;
+      const quantity = Math.max(1, roundCurrency(item?.quantity || product?.quantity || 1));
+      const unitPrice = roundCurrency(item?.price || product?.price || 0);
+      const taxableAmount = roundCurrency(unitPrice * quantity);
+      const gstRate = item?.gstRate != null ? productGstRate(item) : productGstRate(product);
+
+      return {
+        product,
+        productId: product?._id || item?.productId || "",
+        name: item?.name || product?.name || "Product",
+        image: item?.image || product?.image || "",
+        vendor: item?.vendor || product?.vendor,
+        vendorName: item?.vendorName || product?.vendorName || "",
+        category: item?.category || product?.category || "",
+        quantity,
+        unitPrice,
+        taxableAmount,
+        gstRate,
+      };
+    })
+    .filter((item) => item.taxableAmount > 0);
+
+  const subtotal = normalizedItems.reduce((sum, item) => sum + item.taxableAmount, 0);
+  const coupon = resolveCouponDetails(couponCode, subtotal);
+  const discountAmount = roundCurrency(coupon.discountAmount);
+  let allocatedDiscount = 0;
+
+  const billedItems = normalizedItems.map((item, index) => {
+    const isLastItem = index === normalizedItems.length - 1;
+    const proportionalDiscount =
+      subtotal > 0 ? roundCurrency((discountAmount * item.taxableAmount) / subtotal) : 0;
+    const itemDiscount = isLastItem
+      ? Math.max(0, discountAmount - allocatedDiscount)
+      : Math.min(item.taxableAmount, proportionalDiscount);
+
+    allocatedDiscount += itemDiscount;
+
+    const discountedTaxableAmount = Math.max(0, item.taxableAmount - itemDiscount);
+    const gstAmount = roundCurrency((discountedTaxableAmount * item.gstRate) / 100);
+    const lineTotal = roundCurrency(discountedTaxableAmount + gstAmount);
+
+    return {
+      ...item,
+      discountAmount: itemDiscount,
+      discountedTaxableAmount,
+      gstAmount,
+      lineTotal,
+    };
+  });
+
+  const discountedSubtotal = billedItems.reduce((sum, item) => sum + item.discountedTaxableAmount, 0);
+  const gstAmount = billedItems.reduce((sum, item) => sum + item.gstAmount, 0);
+  const qualifiesForFreeDelivery = discountedSubtotal >= FREE_DELIVERY_THRESHOLD;
+  const deliveryCharge =
+    !billedItems.length || coupon.definition?.type === "shipping"
+      ? 0
+      : qualifiesForFreeDelivery
+      ? 0
+      : STANDARD_DELIVERY_CHARGE;
+  const totalAmount = roundCurrency(discountedSubtotal + gstAmount + deliveryCharge);
+
+  return {
+    items: billedItems,
+    subtotal,
+    discountedSubtotal,
+    discountAmount,
+    gstAmount,
+    deliveryCharge,
+    totalAmount,
+    qualifiesForFreeDelivery,
+    freeDeliveryThreshold: FREE_DELIVERY_THRESHOLD,
+    coupon:
+      coupon.isValid && coupon.definition
+        ? {
+            code: coupon.code,
+            label: coupon.definition.label,
+            type: coupon.definition.type,
+            value: coupon.definition.value,
+            minSubtotal: coupon.definition.minSubtotal,
+            maxDiscount: coupon.definition.maxDiscount || 0,
+          }
+        : null,
+    invalidCoupon:
+      !coupon.isValid && coupon.code
+        ? {
+            code: coupon.code,
+            message: coupon.message,
+          }
+        : null,
+  };
 }
 
 function getProductStock(product) {
@@ -273,6 +479,44 @@ function findProductById(productId) {
   return null;
 }
 
+function isDirectCheckoutActive() {
+  return state.checkout.mode === "direct" && Boolean(state.checkout.directCheckout?.productId);
+}
+
+function currentDirectCheckoutItem() {
+  if (!isDirectCheckoutActive()) {
+    return null;
+  }
+
+  const product = findProductById(state.checkout.directCheckout.productId);
+
+  if (!product) {
+    return null;
+  }
+
+  return {
+    product,
+    quantity: Math.max(1, roundCurrency(state.checkout.directCheckout.quantity || 1)),
+  };
+}
+
+function currentCheckoutItems() {
+  if (isDirectCheckoutActive()) {
+    const directItem = currentDirectCheckoutItem();
+    return directItem ? [directItem] : [];
+  }
+
+  return safeCartItems();
+}
+
+function currentCheckoutCount() {
+  return currentCheckoutItems().reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
+}
+
+function currentCheckoutBill() {
+  return buildBillFromItems(currentCheckoutItems(), state.checkout.couponCode);
+}
+
 function ratingStars(rating = 0) {
   return `<span class="meta">${"★".repeat(Math.max(1, Math.round(rating)))}</span> <span class="meta">${rating.toFixed(1)}</span>`;
 }
@@ -282,7 +526,77 @@ function getCartCount() {
 }
 
 function getCartSubtotal() {
-  return safeCartItems().reduce((sum, item) => sum + item.product.price * item.quantity, 0);
+  return currentCartBill().subtotal;
+}
+
+function currentCartBill() {
+  return buildBillFromItems(safeCartItems(), state.checkout.couponCode);
+}
+
+function resetCheckoutState(options = {}) {
+  const { preserveShippingAddress = false } = options;
+
+  state.paymentAuthorization = null;
+  state.checkout.paymentMethod = "Cash on Delivery";
+  state.checkout.shippingAddress = preserveShippingAddress ? state.checkout.shippingAddress : "";
+  state.checkout.couponCode = "";
+  state.checkout.mode = "cart";
+  state.checkout.directCheckout = null;
+  state.checkout.upiModalOpen = false;
+  state.checkout.upiQrVisible = false;
+}
+
+function orderBillDetails(order = {}) {
+  const orderItems = Array.isArray(order.items)
+    ? order.items.map((item) => ({
+        ...item,
+        product:
+          item?.product && typeof item.product === "object"
+            ? item.product
+            : {
+                _id: item?.product || "",
+                name: item?.name || "Product",
+                image: item?.image || "",
+                category: item?.category || "",
+                gstRate: item?.gstRate,
+                vendorName: item?.vendorName || "",
+              },
+      }))
+    : [];
+
+  if (order?.billing && Number(order.billing.totalAmount || 0) > 0) {
+    return {
+      ...order.billing,
+      items: orderItems.map((item) => ({
+        product: item.product,
+        productId: item?.product?._id || item?.product || "",
+        name: item.name || item?.product?.name || "Product",
+        quantity: Number(item.quantity) || 1,
+        unitPrice: Number(item.price) || 0,
+        taxableAmount: Number(item.taxableAmount) || roundCurrency((Number(item.price) || 0) * (Number(item.quantity) || 1)),
+        gstRate: Number(item.gstRate) || productGstRate(item.product || item),
+        discountAmount: Number(item.discountAmount) || 0,
+        discountedTaxableAmount:
+          Number(item.discountedTaxableAmount) ||
+          Math.max(
+            0,
+            roundCurrency((Number(item.price) || 0) * (Number(item.quantity) || 1)) - (Number(item.discountAmount) || 0)
+          ),
+        gstAmount: Number(item.gstAmount) || 0,
+        lineTotal:
+          Number(item.lineTotal) ||
+          roundCurrency(
+            (Number(item.discountedTaxableAmount) ||
+              Math.max(
+                0,
+                roundCurrency((Number(item.price) || 0) * (Number(item.quantity) || 1)) - (Number(item.discountAmount) || 0)
+              )) + (Number(item.gstAmount) || 0)
+          ),
+      })),
+    };
+  }
+
+  return buildBillFromItems(orderItems, order?.billing?.coupon?.code || "");
 }
 
 function isWishlisted(productId) {
@@ -298,16 +612,21 @@ function isUpiPayment(method = state.checkout.paymentMethod) {
 }
 
 function syncCheckoutState() {
-  if (!safeCartItems().length) {
+  if (!currentCheckoutItems().length) {
     state.paymentAuthorization = null;
+    state.checkout.couponCode = "";
+    state.checkout.mode = "cart";
+    state.checkout.directCheckout = null;
     state.checkout.upiModalOpen = false;
     state.checkout.upiQrVisible = false;
     return;
   }
 
+  const bill = currentCheckoutBill();
+
   if (
     state.paymentAuthorization &&
-    Number(state.paymentAuthorization.amount || 0) !== Number(getCartSubtotal())
+    Number(state.paymentAuthorization.amount || 0) !== Number(bill.totalAmount)
   ) {
     state.paymentAuthorization = null;
   }
@@ -468,17 +787,17 @@ function upiPaymentMarkup(amount = 0) {
 }
 
 function checkoutModalMarkup() {
-  if (!(state.currentView === "cart" && isUpiPayment() && state.checkout.upiModalOpen)) {
+  if (!(state.currentView === "orderSummary" && isUpiPayment() && state.checkout.upiModalOpen)) {
     return "";
   }
 
-  return upiPaymentMarkup(getCartSubtotal());
+  return upiPaymentMarkup(currentCheckoutBill().totalAmount);
 }
 
 function syncOverlayState() {
   document.body.classList.toggle(
     "modal-open",
-    Boolean(state.currentView === "cart" && isUpiPayment() && state.checkout.upiModalOpen)
+    Boolean(state.currentView === "orderSummary" && isUpiPayment() && state.checkout.upiModalOpen)
   );
 }
 
@@ -671,6 +990,19 @@ function normalizedProductName(name = "") {
   return curatedProductNameOverrides[name] || name;
 }
 
+function normalizeReviewRecord(review) {
+  if (!review || typeof review !== "object") {
+    return review;
+  }
+
+  return {
+    ...review,
+    customerName: review.customerName || "Customer",
+    rating: Math.min(5, Math.max(1, Number(review.rating) || 1)),
+    comment: String(review.comment || "").trim(),
+  };
+}
+
 function normalizeProductRecord(product) {
   if (!product || typeof product !== "object" || Array.isArray(product)) {
     return product;
@@ -683,6 +1015,15 @@ function normalizeProductRecord(product) {
     ...product,
     name: normalizedName,
     image: explicitImage || product.image,
+    gstRate: productGstRate(product),
+    reviewCount: Math.max(
+      0,
+      Number(product.reviewCount) ||
+        (Array.isArray(product.reviews) ? product.reviews.length : 0)
+    ),
+    reviews: Array.isArray(product.reviews)
+      ? product.reviews.map(normalizeReviewRecord)
+      : [],
   };
 }
 
@@ -710,14 +1051,101 @@ function normalizeOrderRecord(order) {
 
   return {
     ...order,
+    billing: order.billing
+      ? {
+          ...order.billing,
+          subtotal: Number(order.billing.subtotal) || 0,
+          discountedSubtotal: Number(order.billing.discountedSubtotal) || 0,
+          discountAmount: Number(order.billing.discountAmount) || 0,
+          gstAmount: Number(order.billing.gstAmount) || 0,
+          deliveryCharge: Number(order.billing.deliveryCharge) || 0,
+          totalAmount: Number(order.billing.totalAmount) || Number(order.totalAmount) || 0,
+          freeDeliveryThreshold:
+            Number(order.billing.freeDeliveryThreshold) || FREE_DELIVERY_THRESHOLD,
+          qualifiesForFreeDelivery: Boolean(order.billing.qualifiesForFreeDelivery),
+        }
+      : null,
     items: Array.isArray(order.items)
       ? order.items.map((item) => ({
           ...item,
           name: normalizedProductName(item?.name),
+          gstRate: Number(item?.gstRate) || 0,
+          taxableAmount: Number(item?.taxableAmount) || 0,
+          discountAmount: Number(item?.discountAmount) || 0,
+          discountedTaxableAmount: Number(item?.discountedTaxableAmount) || 0,
+          gstAmount: Number(item?.gstAmount) || 0,
+          lineTotal: Number(item?.lineTotal) || 0,
           product: normalizeProductRecord(item?.product),
         }))
       : order.items,
   };
+}
+
+function replaceProductRecord(updatedProduct) {
+  const normalizedProduct = normalizeProductRecord(updatedProduct);
+
+  const updateProductCollection = (collection = []) =>
+    collection.map((product) => (product?._id === normalizedProduct._id ? { ...product, ...normalizedProduct } : product));
+
+  const updateCartCollection = (collection = []) =>
+    collection.map((item) =>
+      item?.product?._id === normalizedProduct._id
+        ? {
+            ...item,
+            product: { ...item.product, ...normalizedProduct },
+          }
+        : item
+    );
+
+  const updateOrderCollection = (collection = []) =>
+    collection.map((order) => ({
+      ...order,
+      items: Array.isArray(order.items)
+        ? order.items.map((item) => {
+            const productId = item?.product?._id || item?.product;
+            if (productId !== normalizedProduct._id) {
+              return item;
+            }
+
+            return {
+              ...item,
+              product: { ...(typeof item.product === "object" ? item.product : {}), ...normalizedProduct },
+              name: normalizedProduct.name || item.name,
+              image: normalizedProduct.image || item.image,
+              gstRate: normalizedProduct.gstRate ?? item.gstRate,
+            };
+          })
+        : order.items,
+    }));
+
+  state.products = updateProductCollection(state.products);
+  state.orders = updateOrderCollection(state.orders);
+
+  if (state.profile) {
+    state.profile = {
+      ...state.profile,
+      wishlist: Array.isArray(state.profile.wishlist)
+        ? updateProductCollection(state.profile.wishlist)
+        : state.profile.wishlist,
+      cart: Array.isArray(state.profile.cart)
+        ? updateCartCollection(state.profile.cart)
+        : state.profile.cart,
+    };
+  }
+
+  if (state.vendorDashboard?.products) {
+    state.vendorDashboard = {
+      ...state.vendorDashboard,
+      products: updateProductCollection(state.vendorDashboard.products),
+    };
+  }
+
+  if (state.adminDashboard?.products) {
+    state.adminDashboard = {
+      ...state.adminDashboard,
+      products: updateProductCollection(state.adminDashboard.products),
+    };
+  }
 }
 
 const beautySvgPalettes = [
@@ -1216,11 +1644,29 @@ async function refreshProfile() {
   state.orders = (ordersData.data || []).map(normalizeOrderRecord);
 
   if (state.user.role === "vendor") {
-    state.vendorDashboard = (await api("/api/vendor/dashboard")).data;
+    const dashboard = (await api("/api/vendor/dashboard")).data;
+    state.vendorDashboard = {
+      ...dashboard,
+      products: Array.isArray(dashboard.products)
+        ? dashboard.products.map(normalizeProductRecord)
+        : dashboard.products,
+      orders: Array.isArray(dashboard.orders)
+        ? dashboard.orders.map(normalizeOrderRecord)
+        : dashboard.orders,
+    };
   }
 
   if (state.user.role === "admin") {
-    state.adminDashboard = (await api("/api/admin/dashboard")).data;
+    const dashboard = (await api("/api/admin/dashboard")).data;
+    state.adminDashboard = {
+      ...dashboard,
+      products: Array.isArray(dashboard.products)
+        ? dashboard.products.map(normalizeProductRecord)
+        : dashboard.products,
+      orders: Array.isArray(dashboard.orders)
+        ? dashboard.orders.map(normalizeOrderRecord)
+        : dashboard.orders,
+    };
   }
 
   syncCheckoutState();

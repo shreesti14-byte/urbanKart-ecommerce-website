@@ -3,24 +3,141 @@ const User = require("../models/User");
 const Product = require("../models/Product");
 const Order = require("../models/Order");
 const { protect, authorize } = require("../middleware/authMiddleware");
+const { calculateOrderBill } = require("../config/billing");
 
 const router = express.Router();
 const CANCELLABLE_ORDER_STATUSES = new Set(["processing", "confirmed"]);
 const ADVANCEABLE_ORDER_STATUSES = new Set(["processing", "confirmed", "shipped", "delivered"]);
+const normalizeCheckoutQuantity = (value = 1) => Math.max(1, Math.round(Number(value) || 1));
 
 const cardMask = (number = "") => {
   const digits = String(number).replace(/\D/g, "");
   return `**** **** **** ${digits.slice(-4)}`;
 };
 
-const cartSubtotal = (cart = []) =>
-  cart.reduce((sum, item) => sum + (item.product?.price || 0) * item.quantity, 0);
-
 const normalizeCartItems = (cart = []) =>
   cart.filter((item) => item.product).map((item) => ({
     product: item.product._id || item.product,
     quantity: item.quantity,
   }));
+
+const loadUserCart = async (userId) => {
+  const user = await User.findById(userId).populate("cart.product");
+  const validCartItems = user.cart.filter((item) => item.product);
+
+  if (validCartItems.length !== user.cart.length) {
+    user.cart = normalizeCartItems(validCartItems);
+    await user.save();
+    await user.populate("cart.product");
+  }
+
+  return {
+    user,
+    validCartItems: user.cart.filter((item) => item.product),
+  };
+};
+
+const loadLatestCartProducts = async (validCartItems = []) => {
+  const billableItems = [];
+  const liveProducts = [];
+
+  for (const item of validCartItems) {
+    const product = await Product.findById(item.product._id);
+
+    if (!product || product.stock < item.quantity) {
+      const error = new Error(`Insufficient stock for ${item.product.name}`);
+      error.status = 400;
+      throw error;
+    }
+
+    liveProducts.push({ product, quantity: item.quantity });
+    billableItems.push({
+      product: product._id,
+      name: product.name,
+      image: product.image,
+      category: product.category,
+      price: product.price,
+      quantity: item.quantity,
+      gstRate: product.gstRate,
+      vendor: product.vendor,
+      vendorName: product.vendorName,
+    });
+  }
+
+  return { billableItems, liveProducts };
+};
+
+const buildBillableItem = (product, quantity) => ({
+  product: product._id,
+  name: product.name,
+  image: product.image,
+  category: product.category,
+  price: product.price,
+  quantity,
+  gstRate: product.gstRate,
+  vendor: product.vendor,
+  vendorName: product.vendorName,
+});
+
+const loadDirectCheckoutProduct = async (directCheckout = {}) => {
+  const productId = String(directCheckout.productId || directCheckout.product || "").trim();
+  const quantity = normalizeCheckoutQuantity(directCheckout.quantity);
+
+  if (!productId) {
+    return { billableItems: [], liveProducts: [] };
+  }
+
+  const product = await Product.findById(productId);
+
+  if (!product) {
+    const error = new Error("Product not found");
+    error.status = 404;
+    throw error;
+  }
+
+  if (product.stock < quantity) {
+    const error = new Error(`Insufficient stock for ${product.name}`);
+    error.status = 400;
+    throw error;
+  }
+
+  return {
+    billableItems: [buildBillableItem(product, quantity)],
+    liveProducts: [{ product, quantity }],
+  };
+};
+
+const loadCheckoutSelection = async (userId, directCheckout = null) => {
+  const directProductId = String(directCheckout?.productId || directCheckout?.product || "").trim();
+
+  if (directProductId) {
+    const user = await User.findById(userId);
+
+    if (!user) {
+      const error = new Error("User not found");
+      error.status = 404;
+      throw error;
+    }
+
+    return {
+      user,
+      validCartItems: [],
+      isDirectCheckout: true,
+      ...(await loadDirectCheckoutProduct(directCheckout)),
+    };
+  }
+
+  const { user, validCartItems } = await loadUserCart(userId);
+
+  return {
+    user,
+    validCartItems,
+    isDirectCheckout: false,
+    ...(validCartItems.length
+      ? await loadLatestCartProducts(validCartItems)
+      : { billableItems: [], liveProducts: [] }),
+  };
+};
 
 const restockOrderItems = async (order) => {
   for (const item of order.items || []) {
@@ -55,17 +172,16 @@ const cancelOrder = async (order) => {
 
 router.post("/authorize", protect, authorize("customer", "admin"), async (req, res, next) => {
   try {
-    const { cardHolder, cardNumber, expiry, cvv } = req.body;
-    const user = await User.findById(req.user._id).populate("cart.product");
-    const validCartItems = user.cart.filter((item) => item.product);
+    const { cardHolder, cardNumber, expiry, cvv, couponCode = "", directCheckout = null } = req.body;
+    const { billableItems, isDirectCheckout } = await loadCheckoutSelection(req.user._id, directCheckout);
 
-    if (validCartItems.length !== user.cart.length) {
-      user.cart = normalizeCartItems(validCartItems);
-      await user.save();
-    }
-
-    if (!validCartItems.length) {
-      return res.status(400).json({ success: false, message: "Add items to cart before authorization" });
+    if (!billableItems.length) {
+      return res.status(400).json({
+        success: false,
+        message: isDirectCheckout
+          ? "Select a product before authorization"
+          : "Add items to cart before authorization",
+      });
     }
 
     const sanitizedNumber = String(cardNumber || "").replace(/\D/g, "");
@@ -89,7 +205,12 @@ router.post("/authorize", protect, authorize("customer", "admin"), async (req, r
       return res.status(400).json({ success: false, message: "Enter a valid CVV" });
     }
 
-    const totalAmount = cartSubtotal(validCartItems);
+    const bill = calculateOrderBill(billableItems, couponCode);
+
+    if (bill.invalidCoupon) {
+      return res.status(400).json({ success: false, message: bill.invalidCoupon.message });
+    }
+
     const now = new Date();
     const paymentReference = `PAY-${now.getTime().toString().slice(-8)}`;
     const authorizationCode = `AUTH${Math.floor(100000 + Math.random() * 900000)}`;
@@ -103,7 +224,8 @@ router.post("/authorize", protect, authorize("customer", "admin"), async (req, r
         authorizationCode,
         authorizedAt: now,
         maskedCard: cardMask(sanitizedNumber),
-        amount: totalAmount,
+        amount: bill.totalAmount,
+        billing: bill,
       },
     });
   } catch (error) {
@@ -113,46 +235,29 @@ router.post("/authorize", protect, authorize("customer", "admin"), async (req, r
 
 router.post("/", protect, authorize("customer", "admin"), async (req, res, next) => {
   try {
-    const { shippingAddress, paymentMethod = "Cash on Delivery", paymentAuthorization } = req.body;
-    const user = await User.findById(req.user._id).populate("cart.product");
-    const validCartItems = user.cart.filter((item) => item.product);
+    const {
+      shippingAddress,
+      paymentMethod = "Cash on Delivery",
+      paymentAuthorization,
+      couponCode = "",
+      directCheckout = null,
+    } = req.body;
+    const { user, billableItems, liveProducts, isDirectCheckout } = await loadCheckoutSelection(
+      req.user._id,
+      directCheckout
+    );
 
-    if (validCartItems.length !== user.cart.length) {
-      user.cart = normalizeCartItems(validCartItems);
-      await user.save();
-      await user.populate("cart.product");
-    }
-
-    if (!validCartItems.length) {
-      return res.status(400).json({ success: false, message: "Your cart is empty" });
-    }
-
-    const items = [];
-    let totalAmount = 0;
-
-    for (const item of validCartItems) {
-      const product = await Product.findById(item.product._id);
-
-      if (!product || product.stock < item.quantity) {
-        return res.status(400).json({
-          success: false,
-          message: `Insufficient stock for ${item.product.name}`,
-        });
-      }
-
-      product.stock -= item.quantity;
-      await product.save();
-
-      totalAmount += product.price * item.quantity;
-      items.push({
-        product: product._id,
-        name: product.name,
-        image: product.image,
-        price: product.price,
-        quantity: item.quantity,
-        vendor: product.vendor,
-        vendorName: product.vendorName,
+    if (!billableItems.length) {
+      return res.status(400).json({
+        success: false,
+        message: isDirectCheckout ? "Select a product before checkout" : "Your cart is empty",
       });
+    }
+
+    const bill = calculateOrderBill(billableItems, couponCode);
+
+    if (bill.invalidCoupon) {
+      return res.status(400).json({ success: false, message: bill.invalidCoupon.message });
     }
 
     const requiresAuthorization = paymentMethod === "Card Authorization";
@@ -173,21 +278,58 @@ router.post("/", protect, authorize("customer", "admin"), async (req, res, next)
       }
     }
 
+    for (const liveItem of liveProducts) {
+      liveItem.product.stock -= liveItem.quantity;
+      await liveItem.product.save();
+    }
+
+    const items = bill.items.map((item) => ({
+      product: item.product,
+      name: item.name,
+      image: item.image,
+      category: item.category,
+      price: item.unitPrice,
+      quantity: item.quantity,
+      gstRate: item.gstRate,
+      taxableAmount: item.taxableAmount,
+      discountAmount: item.discountAmount,
+      discountedTaxableAmount: item.discountedTaxableAmount,
+      gstAmount: item.gstAmount,
+      lineTotal: item.lineTotal,
+      vendor: item.vendor,
+      vendorName: item.vendorName,
+    }));
+
     const order = await Order.create({
       customer: req.user._id,
       items,
       shippingAddress: shippingAddress || user.address || "Default address",
       paymentMethod,
       paymentStatus,
-      paymentReference: paymentAuthorization?.paymentReference || (isUpiPayment ? `UPI-${Date.now().toString().slice(-8)}` : ""),
+      paymentReference:
+        paymentAuthorization?.paymentReference ||
+        (isUpiPayment ? `UPI-${Date.now().toString().slice(-8)}` : ""),
       authorizationCode: paymentAuthorization?.authorizationCode || "",
       authorizedAt: paymentAuthorization?.authorizedAt || (isUpiPayment ? now : undefined),
       maskedCard: paymentAuthorization?.maskedCard || "",
-      totalAmount,
+      billing: {
+        subtotal: bill.subtotal,
+        discountedSubtotal: bill.discountedSubtotal,
+        discountAmount: bill.discountAmount,
+        gstAmount: bill.gstAmount,
+        deliveryCharge: bill.deliveryCharge,
+        totalAmount: bill.totalAmount,
+        freeDeliveryThreshold: bill.freeDeliveryThreshold,
+        qualifiesForFreeDelivery: bill.qualifiesForFreeDelivery,
+        coupon: bill.coupon || undefined,
+      },
+      totalAmount: bill.totalAmount,
     });
 
-    user.cart = [];
-    await user.save();
+    if (!isDirectCheckout) {
+      user.cart = [];
+      await user.save();
+    }
 
     res.status(201).json({ success: true, message: "Order placed successfully", data: order });
   } catch (error) {

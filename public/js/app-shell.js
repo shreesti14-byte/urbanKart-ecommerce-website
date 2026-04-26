@@ -101,7 +101,7 @@ function customerHeader() {
           <span class="utility-link" onclick="setView('profile')">Account</span>
           <span class="utility-icon" onclick="setView('wishlist')" title="Wishlist">&#9825;</span>
           <span class="utility-icon" onclick="setView('orders')" title="Orders">ORD</span>
-          <span class="utility-icon utility-icon-cart" onclick="setView('cart')" title="Cart"><span class="cart-icon">&#128722;</span><span class="cart-count">${getCartCount()}</span></span>
+      <span class="utility-icon utility-icon-cart" onclick="openCart()" title="Cart"><span class="cart-icon">&#128722;</span><span class="cart-count">${getCartCount()}</span></span>
         </div>
       </div>
       <div class="category-nav-wrap">

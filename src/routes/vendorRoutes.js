@@ -16,7 +16,12 @@ router.get("/dashboard", protect, authorize("vendor"), async (req, res, next) =>
     const totalRevenue = orders.reduce((sum, order) => {
       const vendorTotal = order.items
         .filter((item) => item.vendor.toString() === req.user._id.toString())
-        .reduce((itemSum, item) => itemSum + item.price * item.quantity, 0);
+        .reduce(
+          (itemSum, item) =>
+            itemSum +
+            (Number(item.lineTotal) || Number(item.discountedTaxableAmount) || Number(item.price) * Number(item.quantity || 1)),
+          0
+        );
 
       return sum + vendorTotal;
     }, 0);

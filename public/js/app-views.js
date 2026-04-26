@@ -185,6 +185,286 @@ function catalogView() {
   `;
 }
 
+function reviewCountLabel(product = {}) {
+  const count = Math.max(0, Number(product.reviewCount) || (product.reviews || []).length || 0);
+  return `${count} review${count === 1 ? "" : "s"}`;
+}
+
+function reviewFormMarkup(product = {}) {
+  if (!state.user) {
+    return `<p class="meta">Login with a customer account to add a review or comment.</p>`;
+  }
+
+  if (!isCustomer()) {
+    return `<p class="meta">Reviews and comments can be posted from customer accounts.</p>`;
+  }
+
+  const existingReview = (product.reviews || []).find(
+    (review) => String(review.customer?._id || review.customer || "") === String(state.user?._id || "")
+  );
+
+  return `
+    <form class="review-form" onsubmit="submitProductReview(event, '${product._id}')">
+      <div class="field">
+        <label for="reviewRating">Your rating</label>
+        <select id="reviewRating">
+          ${[5, 4, 3, 2, 1]
+            .map(
+              (rating) => `
+                <option value="${rating}" ${
+                  Number(existingReview?.rating || 5) === rating ? "selected" : ""
+                }>${rating} star${rating === 1 ? "" : "s"}</option>
+              `
+            )
+            .join("")}
+        </select>
+      </div>
+      <div class="field">
+        <label for="reviewComment">Review / Comment</label>
+        <textarea id="reviewComment" rows="4" placeholder="Share what you liked, sizing notes, quality, or delivery experience." required>${escapeText(
+          existingReview?.comment || ""
+        )}</textarea>
+      </div>
+      <button class="btn btn-primary" type="submit">${existingReview ? "Update Review" : "Post Review"}</button>
+    </form>
+  `;
+}
+
+function productReviewsMarkup(product = {}) {
+  const reviews = [...(product.reviews || [])].sort(
+    (left, right) => new Date(right.createdAt || 0).getTime() - new Date(left.createdAt || 0).getTime()
+  );
+
+  return `
+    <section class="panel review-panel">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">Customer Reviews</p>
+          <h3 class="section-title">${reviewCountLabel(product)}</h3>
+        </div>
+        <div class="review-summary-chip">${ratingStars(Number(product.rating) || 0)}</div>
+      </div>
+      <div class="review-layout">
+        <div class="review-list">
+          ${
+            reviews.length
+              ? reviews
+                  .map(
+                    (review) => `
+                      <article class="review-card">
+                        <div class="review-card-head">
+                          <strong>${escapeText(review.customerName || "Customer")}</strong>
+                          <span class="meta">${formatDateTime(review.createdAt)}</span>
+                        </div>
+                        <div>${ratingStars(Number(review.rating) || 0)}</div>
+                        <p>${escapeText(review.comment || "")}</p>
+                      </article>
+                    `
+                  )
+                  .join("")
+              : `<div class="empty-state">No reviews yet. Be the first customer to leave a comment.</div>`
+          }
+        </div>
+        <aside class="review-side-panel">
+          <p class="eyebrow">Write A Review</p>
+          <h4>Help the next customer shop confidently</h4>
+          ${reviewFormMarkup(product)}
+        </aside>
+      </div>
+    </section>
+  `;
+}
+
+function quantityOptionsMarkup(currentQuantity = 1, maxQuantity = 1) {
+  const safeCurrent = Math.max(1, Number(currentQuantity) || 1);
+  const safeMax = Math.max(1, Number(maxQuantity) || 1);
+  const values = new Set(Array.from({ length: Math.min(safeMax, 10) }, (_, index) => index + 1));
+
+  values.add(safeCurrent);
+  values.add(safeMax);
+
+  return [...values]
+    .sort((left, right) => left - right)
+    .map(
+      (value) => `
+        <option value="${value}" ${value === safeCurrent ? "selected" : ""}>${value}</option>
+      `
+    )
+    .join("");
+}
+
+function couponOfferMarkup() {
+  return `
+    <div class="field coupon-field">
+      <label for="couponSelector">Coupons</label>
+      <select id="couponSelector" class="coupon-select" onchange="selectCheckoutCoupon(this.value)">
+        <option value="">See all coupons</option>
+        ${COUPON_DEFINITIONS.map(
+          (coupon) => `
+            <option value="${coupon.code}" ${state.checkout.couponCode === coupon.code ? "selected" : ""}>
+              ${coupon.code} - ${escapeText(coupon.label)}
+            </option>
+          `
+        ).join("")}
+      </select>
+    </div>
+  `;
+}
+
+function checkoutSummaryItemsMarkup(bill = {}) {
+  return `
+    <div class="summary-item-stack">
+      ${(bill.items || [])
+        .map((item) => {
+          const product =
+            item?.product && typeof item.product === "object"
+              ? item.product
+              : {
+                  name: item.name,
+                  image: item.image,
+                  category: item.category,
+                  vendorName: item.vendorName,
+                };
+
+          return `
+            <article class="summary-line-item">
+              <div class="summary-line-media">
+                <img ${fallbackImageAttrs(product)} alt="${escapeText(item.name)}" />
+              </div>
+              <div class="summary-line-copy">
+                <strong>${escapeText(item.name)}</strong>
+                <span>${escapeText(item.vendorName || product.vendorName || "UrbanKart")}</span>
+                <small>Qty ${item.quantity} x ${formatCurrency(item.unitPrice)} | GST ${item.gstRate}%</small>
+              </div>
+              <div class="summary-line-values">
+                <strong>${formatCurrency(item.lineTotal)}</strong>
+                <small>GST ${formatCurrency(item.gstAmount)}</small>
+              </div>
+            </article>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function checkoutItemCardMarkup(item, options = {}) {
+  const { direct = false, showBuyNow = false } = options;
+  const product = item.product;
+  const inventory = getInventoryState(product);
+  const maxQuantity = Math.max(1, getProductStock(product));
+
+  return `
+    <article class="cart-item checkout-item-card">
+      <div class="cart-item-media">
+        <img ${fallbackImageAttrs(product)} alt="${escapeText(product.name)}" />
+      </div>
+      <div class="cart-item-copy">
+        <div class="checkout-item-head">
+          <div>
+            <h3>${escapeText(product.name)}</h3>
+            <p class="meta">${escapeText(product.vendorName || "UrbanKart")}</p>
+            <div class="cart-item-status">
+              ${stockBadgeMarkup(product)}
+              ${storefrontBadgeMarkup(product)}
+            </div>
+          </div>
+          <div class="checkout-item-price">${formatCurrency((Number(item.quantity) || 1) * (Number(product.price) || 0))}</div>
+        </div>
+        <p class="checkout-item-copyline">${escapeText(product.description || "").slice(0, 124)}</p>
+        <p class="price-tag">${formatCurrency(product.price)}</p>
+        <div class="toolbar checkout-item-actions">
+          <div class="qty-box qty-box-select">
+            <label>Qty</label>
+            <select
+              class="qty-select"
+              onchange="${direct ? "updateDirectCheckoutQuantity(this.value)" : `updateCartQuantity('${product._id}', this.value)`}"
+              ${inventory.purchasable ? "" : "disabled"}
+            >
+              ${quantityOptionsMarkup(item.quantity, maxQuantity)}
+            </select>
+          </div>
+           ${
+            direct
+              ? `<button class="btn btn-secondary" type="button" onclick="openProduct('${product._id}')">View product</button>`
+              : `${showBuyNow ? `<button class="btn btn-primary" type="button" onclick="startBuyNow('${product._id}', ${item.quantity})" ${
+                  inventory.purchasable ? "" : "disabled"
+                }>Buy Now</button>` : ""}
+                 <button class="btn btn-ghost" type="button" onclick="removeFromCart('${product._id}')">Remove</button>
+                 <button class="btn btn-secondary" type="button" onclick="openProduct('${product._id}')">View details</button>`
+          }
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function billItemsMarkup(bill = {}, options = {}) {
+  const { compact = false } = options;
+
+  return `
+    <div class="bill-item-list ${compact ? "compact" : ""}">
+      ${(bill.items || [])
+        .map(
+          (item) => `
+            <div class="bill-item-row">
+              <div>
+                <strong>${escapeText(item.name)}</strong>
+                <p class="meta">Qty ${item.quantity} x ${formatCurrency(item.unitPrice)} | GST ${item.gstRate}%</p>
+              </div>
+              <div class="bill-item-values">
+                <span>${formatCurrency(item.lineTotal)}</span>
+                <small class="meta">GST ${formatCurrency(item.gstAmount)}</small>
+              </div>
+            </div>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function billSummaryMarkup(bill = {}, options = {}) {
+  const { title = "Order Bill", note = "" } = options;
+
+  return `
+    <section class="bill-card">
+      <div class="bill-card-head">
+        <div>
+          <p class="eyebrow">Invoice</p>
+          <h4>${escapeText(title)}</h4>
+        </div>
+        <span class="bill-total-pill">${formatCurrency(bill.totalAmount || 0)}</span>
+      </div>
+      ${billItemsMarkup(bill)}
+      <div class="bill-summary-table">
+        <div><span>Subtotal</span><strong>${formatCurrency(bill.subtotal || 0)}</strong></div>
+        <div><span>Discount</span><strong>- ${formatCurrency(bill.discountAmount || 0)}</strong></div>
+        <div><span>GST</span><strong>${formatCurrency(bill.gstAmount || 0)}</strong></div>
+        <div><span>Delivery</span><strong>${formatCurrency(bill.deliveryCharge || 0)}</strong></div>
+        <div class="grand-total"><span>Total</span><strong>${formatCurrency(bill.totalAmount || 0)}</strong></div>
+      </div>
+      ${
+        bill.coupon
+          ? `<p class="meta">Coupon applied: <strong>${escapeText(bill.coupon.code)}</strong> - ${escapeText(
+              bill.coupon.label || "discount"
+            )}</p>`
+          : ""
+      }
+      <p class="meta">${escapeText(
+        note ||
+          (bill.deliveryCharge === 0
+            ? `Free delivery applied on orders of ${formatCurrency(
+                bill.freeDeliveryThreshold || FREE_DELIVERY_THRESHOLD
+              )} or more.`
+            : `Add products worth ${formatCurrency(
+                Math.max(0, (bill.freeDeliveryThreshold || FREE_DELIVERY_THRESHOLD) - (bill.discountedSubtotal || 0))
+              )} more to unlock free delivery.`)
+      )}</p>
+    </section>
+  `;
+}
+
 function productDetailView() {
   const product = findProductById(state.selectedProduct);
   if (!product) {
@@ -209,20 +489,25 @@ function productDetailView() {
               ${stockBadgeMarkup(product)}
               ${storefrontBadgeMarkup(product)}
             </div>
-            <div>${ratingStars(product.rating)}</div>
+            <div>${ratingStars(product.rating)} <span class="meta">| ${reviewCountLabel(product)}</span></div>
             <p>${escapeText(product.description)}</p>
             <div class="summary-total">${formatCurrency(product.price)}</div>
-            <p class="meta">${escapeText(inventory.detail)}</p>
+            <p class="meta">${escapeText(inventory.detail)} | GST ${productGstRate(product)}% added in bill</p>
             <div>${(product.features || []).map((feature) => `<span class="feature-chip">${escapeText(feature)}</span>`).join("")}</div>
-            <div class="toolbar">
-              <button class="btn btn-primary" onclick="quickAddToCart('${product._id}')" ${
+            <p class="detail-buy-note">Open quick checkout instantly with <strong>Buy Now</strong>, or save the item in your cart for later.</p>
+            <div class="toolbar detail-action-row">
+              <button class="btn btn-primary" type="button" onclick="startBuyNow('${product._id}')" ${
                 inventory.purchasable ? "" : "disabled"
-              }>${inventory.buttonLabel}</button>
+              }>Buy Now</button>
+              <button class="btn btn-secondary" type="button" onclick="quickAddToCart('${product._id}')" ${
+                inventory.purchasable ? "" : "disabled"
+              }>Add to cart</button>
               <button class="btn btn-secondary" onclick="toggleWishlist('${product._id}')">Wishlist</button>
               <button class="btn btn-ghost" onclick="goHome()">Continue shopping</button>
             </div>
           </aside>
         </section>
+        ${productReviewsMarkup(product)}
       </div>
       ${footerMarkup()}
     </div>
@@ -254,81 +539,152 @@ function wishlistView() {
 
 function cartView() {
   const cart = safeCartItems();
-  const paymentMethod = state.checkout.paymentMethod;
-  const showUpiPanel = isUpiPayment(paymentMethod);
-  const submitLabel = showUpiPanel ? "Pay Now & Place Order" : "Place Order";
+  const itemCount = getCartCount();
+
   return `
     ${customerHeader()}
     <div class="commerce-shell">
       <div class="page-shell">
-        <section class="cart-layout">
-          <div class="cart-panel panel">
-            <h2 class="section-title">Shopping Cart</h2>
+        <section class="section-block">
+          <div class="cart-page-panel panel checkout-panel">
+            <div class="checkout-panel-head">
+              <div>
+                <p class="eyebrow">Your Bag</p>
+                <h2 class="section-title">Shopping Cart</h2>
+                <p class="section-kicker">${itemCount} item${itemCount === 1 ? "" : "s"} in your cart. Use <strong>Buy Now</strong> on any product to jump directly to its order summary page.</p>
+              </div>
+              <div class="toolbar checkout-panel-actions">
+                <button class="btn btn-ghost" type="button" onclick="goHome()">Continue shopping</button>
+                ${
+                  cart.length
+                    ? `<button class="btn btn-primary" type="button" onclick="openOrderSummary()">Go To Order Summary</button>`
+                    : ""
+                }
+              </div>
+            </div>
             ${
               cart.length
-                ? cart
-                    .map(
-                      (item) => {
-                        const inventory = getInventoryState(item.product);
-                        const maxQuantity = Math.max(1, getProductStock(item.product));
-
-                        return `
-                        <article class="cart-item">
-                          <img ${fallbackImageAttrs(item.product)} alt="${escapeText(item.product.name)}" />
-                          <div>
-                            <h3>${escapeText(item.product.name)}</h3>
-                            <p class="meta">${escapeText(item.product.vendorName)}</p>
-                            <div class="cart-item-status">
-                              ${stockBadgeMarkup(item.product)}
-                              ${storefrontBadgeMarkup(item.product)}
-                            </div>
-                            <p class="price-tag">${formatCurrency(item.product.price)}</p>
-                            <div class="toolbar">
-                              <div class="qty-box">
-                                <label>Qty</label>
-                                <input class="qty-input" type="number" min="1" max="${maxQuantity}" value="${item.quantity}" onchange="updateCartQuantity('${item.product._id}', this.value)" ${
-                                  inventory.purchasable ? "" : "disabled"
-                                } />
-                              </div>
-                              <button class="btn btn-ghost" onclick="removeFromCart('${item.product._id}')">Remove</button>
-                              <button class="btn btn-secondary" onclick="openProduct('${item.product._id}')">View details</button>
-                            </div>
-                          </div>
-                        </article>
-                      `;
-                      }
-                    )
-                    .join("")
+                ? `<div class="checkout-item-stack">${cart
+                    .map((item) => checkoutItemCardMarkup(item, { showBuyNow: true }))
+                    .join("")}</div>
+                   <div class="cart-page-footer">
+                     <button class="btn btn-primary" type="button" onclick="openOrderSummary()">Proceed To Order Summary</button>
+                   </div>`
                 : `<div class="empty-state">Your cart is empty.</div>`
             }
           </div>
-          <aside class="summary-panel">
-            <p class="eyebrow">Checkout</p>
-            <h2 class="section-title" style="font-size:2.6rem;">Order Summary</h2>
-            <p>Subtotal (${getCartCount()} items)</p>
-            <div class="summary-total">${formatCurrency(getCartSubtotal())}</div>
-            <form onsubmit="placeOrder(event)">
-              <div class="field">
-                <label for="shippingAddress">Shipping Address</label>
-                <textarea id="shippingAddress" oninput="updateCheckoutAddress(this.value)" required>${escapeText(
-                  state.checkout.shippingAddress || state.profile?.address || ""
-                )}</textarea>
-              </div>
-              <div class="field">
-                <label for="paymentMethod">Payment</label>
-                <select id="paymentMethod" onchange="handlePaymentMethodChange(this.value)">
-                  <option value="Cash on Delivery" ${paymentMethod === "Cash on Delivery" ? "selected" : ""}>Cash on Delivery</option>
-                  <option value="UPI Payment" ${paymentMethod === "UPI Payment" ? "selected" : ""}>UPI Payment</option>
-                </select>
-              </div>
-              ${
-                showUpiPanel
-                  ? `<p class="payment-note">Tap <strong>Pay Now & Place Order</strong> to open the UPI QR screen.</p>`
-                  : `<p class="payment-note">Pay when the order arrives using ${escapeText(paymentMethod)}.</p>`
-              }
-              <button class="btn btn-primary" type="submit">${submitLabel}</button>
-            </form>
-          </aside>
+        </section>
+      </div>
+      ${footerMarkup()}
+    </div>
+  `;
+}
+
+function orderSummaryCardMarkup() {
+  const checkoutItems = currentCheckoutItems();
+  const bill = currentCheckoutBill();
+  const paymentMethod = state.checkout.paymentMethod;
+  const showUpiPanel = isUpiPayment(paymentMethod);
+  const isDirectCheckout = isDirectCheckoutActive();
+  const itemCount = currentCheckoutCount();
+  const directItem = currentDirectCheckoutItem();
+  const submitLabel = isDirectCheckout
+    ? showUpiPanel
+      ? "Pay Now & Buy Now"
+      : "Buy Now"
+    : showUpiPanel
+    ? "Pay Now & Place Order"
+    : "Place Order";
+
+  if (!checkoutItems.length) {
+    return `
+      <section class="summary-panel checkout-summary-panel order-summary-page">
+        <div class="empty-state">No items available for checkout.</div>
+        <div class="toolbar order-summary-actions">
+          <button class="btn btn-secondary" type="button" onclick="openCart()">Back to cart</button>
+          <button class="btn btn-ghost" type="button" onclick="goHome()">Continue shopping</button>
+        </div>
+      </section>
+    `;
+  }
+
+  return `
+    <section class="summary-panel checkout-summary-panel order-summary-page">
+      <div class="summary-header">
+        <div>
+          <p class="eyebrow">${isDirectCheckout ? "Quick Order" : "Checkout"}</p>
+          <h2 class="section-title" style="font-size:2.8rem;">Order Summary</h2>
+          <p>Bill preview for ${itemCount} item${itemCount === 1 ? "" : "s"}</p>
+        </div>
+        <span class="summary-item-pill">${itemCount} item${itemCount === 1 ? "" : "s"}</span>
+      </div>
+      <div class="toolbar order-summary-actions">
+        ${
+          isDirectCheckout && directItem
+            ? `<button class="btn btn-secondary" type="button" onclick="openProduct('${directItem.product._id}')">Back to product</button>`
+            : `<button class="btn btn-secondary" type="button" onclick="openCart()">Back to cart</button>`
+        }
+        <button class="btn btn-ghost" type="button" onclick="goHome()">Continue shopping</button>
+      </div>
+      ${checkoutSummaryItemsMarkup(bill)}
+      ${couponOfferMarkup()}
+      ${
+        bill.invalidCoupon
+          ? `<p class="coupon-error">${escapeText(bill.invalidCoupon.message)}</p>`
+          : bill.coupon
+          ? `<p class="coupon-success">Coupon applied!</p>`
+          : `<p class="coupon-helper">Select any coupon from the dropdown to apply it instantly.</p>`
+      }
+      ${
+        bill.coupon
+          ? `<p class="coupon-chip selected-coupon"><strong>${escapeText(bill.coupon.code)}</strong><span>${escapeText(
+              bill.coupon.label
+            )}</span></p>`
+          : ""
+      }
+      <div class="bill-summary-table compact">
+        <div><span>Subtotal</span><strong>${formatCurrency(bill.subtotal)}</strong></div>
+        <div><span>Discount</span><strong>- ${formatCurrency(bill.discountAmount)}</strong></div>
+        <div><span>Tax</span><strong>${formatCurrency(bill.gstAmount)}</strong></div>
+        <div><span>Shipping</span><strong>${bill.deliveryCharge ? formatCurrency(bill.deliveryCharge) : "Free"}</strong></div>
+        <div class="grand-total"><span>Payable</span><strong>${formatCurrency(bill.totalAmount)}</strong></div>
+      </div>
+      <form class="summary-form" onsubmit="placeOrder(event)">
+        <div class="field">
+          <label for="shippingAddress">Shipping Address</label>
+          <textarea id="shippingAddress" oninput="updateCheckoutAddress(this.value)" required>${escapeText(
+            state.checkout.shippingAddress || state.profile?.address || ""
+          )}</textarea>
+        </div>
+        <div class="field">
+          <label for="paymentMethod">Payment</label>
+          <select id="paymentMethod" onchange="handlePaymentMethodChange(this.value)">
+            <option value="Cash on Delivery" ${paymentMethod === "Cash on Delivery" ? "selected" : ""}>Cash on Delivery</option>
+            <option value="UPI Payment" ${paymentMethod === "UPI Payment" ? "selected" : ""}>UPI Payment</option>
+          </select>
+        </div>
+        ${
+          showUpiPanel
+            ? `<p class="payment-note">Tap <strong>${escapeText(submitLabel)}</strong> to open the UPI QR screen for ${formatCurrency(
+                bill.totalAmount
+              )}.</p>`
+            : `<p class="payment-note">Pay when the order arrives using ${escapeText(
+                paymentMethod
+              )}. Free delivery applies at ${formatCurrency(FREE_DELIVERY_THRESHOLD)} and above.</p>`
+        }
+        <button class="btn btn-primary checkout-submit" type="submit">${submitLabel}</button>
+      </form>
+    </section>
+  `;
+}
+
+function orderSummaryView() {
+  return `
+    ${customerHeader()}
+    <div class="commerce-shell">
+      <div class="page-shell">
+        <section class="order-summary-layout">
+          ${orderSummaryCardMarkup()}
         </section>
       </div>
       ${footerMarkup()}
@@ -389,7 +745,11 @@ function visibleOrderTotal(order = {}) {
   }
 
   return visibleOrderItems(order).reduce(
-    (sum, item) => sum + (Number(item?.price) || 0) * (Number(item?.quantity) || 0),
+    (sum, item) =>
+      sum +
+      (Number(item?.lineTotal) ||
+        Number(item?.discountedTaxableAmount) + Number(item?.gstAmount) ||
+        (Number(item?.price) || 0) * (Number(item?.quantity) || 0)),
     0
   );
 }
@@ -472,11 +832,75 @@ function isTrackingExpanded(orderId = "") {
   return state.expandedTrackingOrders.includes(orderId);
 }
 
+function isBillExpanded(orderId = "") {
+  return state.expandedBillOrders.includes(orderId);
+}
+
+function toggleOrderBill(orderId = "") {
+  state.expandedBillOrders = isBillExpanded(orderId)
+    ? state.expandedBillOrders.filter((id) => id !== orderId)
+    : [...state.expandedBillOrders, orderId];
+  render();
+}
+
 function toggleOrderTracking(orderId = "") {
   state.expandedTrackingOrders = isTrackingExpanded(orderId)
     ? state.expandedTrackingOrders.filter((id) => id !== orderId)
     : [...state.expandedTrackingOrders, orderId];
   render();
+}
+
+function visibleOrderBill(order = {}) {
+  const baseBill = orderBillDetails(order);
+
+  if (state.user?.role !== "vendor") {
+    return baseBill;
+  }
+
+  const items = visibleOrderItems(order).map((item) => ({
+    product: item.product,
+    productId: item?.product?._id || item?.product || "",
+    name: item.name || item?.product?.name || "Product",
+    quantity: Number(item.quantity) || 1,
+    unitPrice: Number(item.price) || 0,
+    taxableAmount: Number(item.taxableAmount) || roundCurrency((Number(item.price) || 0) * (Number(item.quantity) || 1)),
+    gstRate: Number(item.gstRate) || productGstRate(item.product || item),
+    discountAmount: Number(item.discountAmount) || 0,
+    discountedTaxableAmount:
+      Number(item.discountedTaxableAmount) ||
+      Math.max(0, roundCurrency((Number(item.price) || 0) * (Number(item.quantity) || 1)) - (Number(item.discountAmount) || 0)),
+    gstAmount: Number(item.gstAmount) || 0,
+    lineTotal:
+      Number(item.lineTotal) ||
+      roundCurrency(
+        (Number(item.discountedTaxableAmount) ||
+          Math.max(
+            0,
+            roundCurrency((Number(item.price) || 0) * (Number(item.quantity) || 1)) - (Number(item.discountAmount) || 0)
+          )) + (Number(item.gstAmount) || 0)
+      ),
+  }));
+
+  return {
+    ...baseBill,
+    items,
+    subtotal: items.reduce((sum, item) => sum + item.taxableAmount, 0),
+    discountedSubtotal: items.reduce((sum, item) => sum + item.discountedTaxableAmount, 0),
+    discountAmount: items.reduce((sum, item) => sum + item.discountAmount, 0),
+    gstAmount: items.reduce((sum, item) => sum + item.gstAmount, 0),
+    deliveryCharge: 0,
+    totalAmount: items.reduce((sum, item) => sum + item.lineTotal, 0),
+  };
+}
+
+function orderBillMarkup(order = {}) {
+  const bill = visibleOrderBill(order);
+  const note =
+    state.user?.role === "vendor"
+      ? "Vendor view shows only the billed value for your visible order items."
+      : "";
+
+  return billSummaryMarkup(bill, { title: "Order Bill", note });
 }
 
 function orderTrackingMarkup(order = {}) {
@@ -608,6 +1032,9 @@ function ordersView() {
                           </div>
                           ${orderItemsMarkup(order)}
                           <div class="order-actions">
+                            <button class="btn btn-secondary" type="button" onclick="toggleOrderBill('${order._id}')">
+                              ${isBillExpanded(order._id) ? "Hide Order Bill" : "Order Bill"}
+                            </button>
                             <button class="btn btn-secondary" type="button" onclick="toggleOrderTracking('${order._id}')">
                               ${isTrackingExpanded(order._id) ? "Hide Tracking" : "Track Order"}
                             </button>
@@ -633,6 +1060,7 @@ function ordersView() {
                                 : ""
                             }
                           </div>
+                          ${isBillExpanded(order._id) ? orderBillMarkup(order) : ""}
                           ${isTrackingExpanded(order._id) ? orderTrackingMarkup(order) : ""}
                           <div class="order-meta-footer">
                             <span>Payment: ${escapeText(order.paymentMethod || "Cash on Delivery")}</span>
@@ -746,12 +1174,13 @@ function vendorView() {
             <div class="field"><label>Name</label><input id="productName" required /></div>
             <div class="field"><label>Description</label><textarea id="productDescription" required></textarea></div>
             <div class="field"><label>Image URL</label><input id="productImage" required /></div>
-            <div class="field"><label>Category</label><select id="productCategory">${state.categories.slice(1).map((category) => `<option value="${escapeText(category)}">${escapeText(category)}</option>`).join("")}</select></div>
+            <div class="field"><label>Category</label><select id="productCategory" onchange="document.getElementById('productGstRate').value = defaultGstRateForCategory(this.value)">${state.categories.slice(1).map((category) => `<option value="${escapeText(category)}">${escapeText(category)}</option>`).join("")}</select></div>
             <div class="field"><label>Price</label><input id="productPrice" type="number" min="0" required /></div>
             <div class="field"><label>Rating</label><input id="productRating" type="number" min="0" max="5" step="0.1" value="4" required /></div>
             <div class="field"><label>Stock</label><input id="productStock" type="number" min="0" required /></div>
+            <div class="field"><label>GST (%)</label><input id="productGstRate" type="number" min="0" max="40" value="12" required /></div>
             <div class="field"><label>Features</label><input id="productFeatures" placeholder="Comma separated" /></div>
-            <p class="form-hint">Stock 0 karoge to customer, vendor, aur admin tino dashboards me product out of stock ke label ke saath dikhega.</p>
+            <p class="form-hint">Stock 0 karoge to customer, vendor, aur admin tino dashboards me product out of stock ke label ke saath dikhega. GST yahin se order bill me add hoga.</p>
             <button class="btn btn-primary" type="submit">Save Product</button>
           </form>
         </section>
