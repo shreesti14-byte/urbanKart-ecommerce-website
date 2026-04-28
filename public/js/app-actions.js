@@ -188,6 +188,15 @@ function openProduct(productId) {
   setView("detail", productId);
 }
 
+function openProductFromCard(event, productId) {
+  const interactiveTarget = event.target.closest("button, a, input, select, textarea, label");
+  if (interactiveTarget) {
+    return;
+  }
+
+  openProduct(productId);
+}
+
 function openCart() {
   resetCheckoutState({ preserveShippingAddress: true });
   state.currentView = "cart";

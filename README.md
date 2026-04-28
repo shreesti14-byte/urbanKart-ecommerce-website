@@ -38,6 +38,8 @@ npm install
 npm run seed
 ```
 
+This also regenerates the catalog SVG assets under `public/images/catalog/`. Only the files in `public/images/catalog/custom/` are meant to be committed.
+
 5. Run validation checks before pushing:
 
 ```bash

@@ -104,7 +104,7 @@ function catalogCard(product) {
   const inventory = getInventoryState(product);
 
   return `
-    <article class="catalog-card">
+    <article class="catalog-card" ondblclick="openProductFromCard(event, '${product._id}')" title="Double-click to view product details">
       <div class="catalog-image">
         <button class="wish-button ${isWishlisted(product._id) ? "active" : ""}" type="button" onclick="toggleWishlist('${product._id}')">&#9825;</button>
         <img ${fallbackImageAttrs(product)} alt="${escapeText(product.name)}" />

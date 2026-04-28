@@ -14,3 +14,11 @@ Thumbs.db
 public/images/catalog/*
 !public/images/catalog/custom/
 !public/images/catalog/custom/**
+
+# Local report/export artifacts
+UrbanKart_Project_Report.docx
+generate_project_report.py
+docx_qa/
+_report_build/
+~$*.docx
+~WRL*.tmp

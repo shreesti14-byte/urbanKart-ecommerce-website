@@ -71,6 +71,9 @@ const slugify = (value = "") =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
 
+const unsplashDownload = (photoId, width = 900) =>
+  `https://unsplash.com/photos/${photoId}/download?force=true&w=${width}`;
+
 const customCatalogImageOverrides = {
   "Oxford Office Shirt": "/images/catalog/custom/oxford-office-shirt.webp",
   "Vintage Graphic Tee": "/images/catalog/custom/vintage-graphic-tee.webp",
@@ -88,6 +91,13 @@ const customCatalogImageOverrides = {
   "pure cotton denim jacket": "/images/catalog/custom/denim-jacket-slate.jpg",
   "Mustard Parrot Chanderi Kurta Set for Men": "/images/catalog/custom/embroidered-kurta-set-male.webp",
   "graphic print Men Sweatshirt": "/images/catalog/custom/varsity-sweatshirt.webp",
+  "Adventure Jogger Set": unsplashDownload("HjamiwXTobc"),
+  "Printed Legging Pack": unsplashDownload("hYOfKPagwlo"),
+  "Festive Lehenga Mini": unsplashDownload("3vBjtMoDZeo"),
+  "Festive Kurta Mini": unsplashDownload("MF9Tt6Wkk_w"),
+  "Tiny Waistcoat Set": unsplashDownload("4vy2MuJCiFQ"),
+  "Cozy Zip Hoodie": unsplashDownload("QxDDa5rRC9k"),
+  "Casual Checked Jacket": "/images/catalog/custom/smart-check-shirt.webp",
 };
 
 const normalizeSeedPrice = (category, basePrice) => {

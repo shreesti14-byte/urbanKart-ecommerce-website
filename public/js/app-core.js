@@ -973,6 +973,13 @@ const curatedProductImageOverrides = {
   "Mustard Parrot Chanderi Kurta Set for Men": "/images/catalog/custom/embroidered-kurta-set-male.webp",
   "Varsity Sweatshirt": "/images/catalog/custom/varsity-sweatshirt.webp",
   "graphic print Men Sweatshirt": "/images/catalog/custom/varsity-sweatshirt.webp",
+  "Adventure Jogger Set": unsplashDownload("HjamiwXTobc"),
+  "Printed Legging Pack": unsplashDownload("hYOfKPagwlo"),
+  "Festive Lehenga Mini": unsplashDownload("3vBjtMoDZeo"),
+  "Festive Kurta Mini": unsplashDownload("MF9Tt6Wkk_w"),
+  "Tiny Waistcoat Set": unsplashDownload("4vy2MuJCiFQ"),
+  "Cozy Zip Hoodie": unsplashDownload("QxDDa5rRC9k"),
+  "Casual Checked Jacket": "/images/catalog/custom/smart-check-shirt.webp",
 };
 
 const curatedProductNameOverrides = {

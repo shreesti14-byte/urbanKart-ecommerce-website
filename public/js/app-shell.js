@@ -266,7 +266,7 @@ function productCard(product) {
   const inventory = getInventoryState(product);
 
   return `
-    <article class="rail-card">
+    <article class="rail-card" ondblclick="openProductFromCard(event, '${product._id}')" title="Double-click to view product details">
       <div class="rail-image">
         <button class="wish-button ${isWishlisted(product._id) ? "active" : ""}" type="button" onclick="toggleWishlist('${product._id}')" title="Wishlist">&#9825;</button>
         <img ${fallbackImageAttrs(product)} alt="${escapeText(product.name)}" />
