@@ -62,6 +62,6 @@ The app runs on `http://localhost:5002` by default, or on the `PORT` value from 
 
 ## Demo Accounts
 
-- Admin: `admin@example.com` / `admin123`
+- Admin: `admin@example.com` / `Admin@123`
 - Vendor: `vendor@example.com` / `vendor123`
 - Customer: `customer@example.com` / `customer123`
